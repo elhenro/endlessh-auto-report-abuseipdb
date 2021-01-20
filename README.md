@@ -12,6 +12,7 @@ includes 15min IP cache, each individual IP is reported every 15min max
 ## usage
 
 1. move your ssh port to some safer port (between 1024 and 65535)
-2. run `./tarpitReporter.sh`
+2. replace `<api-token>` with your abuseipdb api token in `report.sh`
+3. run `./tarpitReporter.sh`
 
 => IPs from stuck SSH login attempts are reported and logged in `reportedIps.txt`
