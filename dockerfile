@@ -1,4 +1,4 @@
-FROM ubuntu:mantic-20240416
+FROM ubuntu:mantic-20240427
 
 RUN apt-get update && apt-get install -y \
     endlessh \
