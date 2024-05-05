@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
     jq \
     git
 
-RUN git clone https://github.com/arbs09/endlessh-auto-report-abuseipdb.git
+RUN git clone https://github.com/elhenro/endlessh-auto-report-abuseipdb.git
 
 WORKDIR /endlessh-auto-report-abuseipdb
 
