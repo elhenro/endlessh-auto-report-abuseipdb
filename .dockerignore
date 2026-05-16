@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.md
+.env
+.env.*
+!.env.example
+reportedIps.txt
+data/

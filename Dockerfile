@@ -1,17 +1,16 @@
-FROM ubuntu:22.04
+FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y \
-    endlessh \
-    curl \
-    jq \
-    git
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         endlessh curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/elhenro/endlessh-auto-report-abuseipdb.git
+WORKDIR /app
 
-WORKDIR /endlessh-auto-report-abuseipdb
-
-RUN sed -i 's/<api-token>/${API_TOKEN}/g' report.sh
-
+COPY tarpitReporter.sh report.sh cache.sh endlessh-config-example.conf ./
 RUN chmod +x tarpitReporter.sh report.sh cache.sh
 
-CMD ["bash", "./tarpitReporter.sh"]
+# endlessh inside listens on 2222 (unprivileged); map host:22 -> container:2222
+EXPOSE 2222
+
+CMD ["./tarpitReporter.sh"]

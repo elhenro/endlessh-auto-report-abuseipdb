@@ -1,0 +1,14 @@
+services:
+  endlessh:
+    build: .
+    image: endlessh-reporter
+    container_name: endlessh-reporter
+    restart: unless-stopped
+    ports:
+      - "22:2222"
+    env_file: .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

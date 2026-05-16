@@ -1,35 +1,43 @@
-# bash scripts for endlessh auto reporting to abuseIpDb
+# endlessh auto-report to AbuseIPDB
 
-includes 15min IP cache, each individual IP is reported every 15min max
+SSH tarpit ([endlessh](https://github.com/skeeto/endlessh)) that stalls bot login attempts and reports the source IPs to [AbuseIPDB](https://www.abuseipdb.com/).
 
-## requirements
-* [endlessh](https://github.com/skeeto/endlessh)
-* [curl](https://github.com/curl/curl)
-* [jq](https://github.com/stedolan/jq) (optional, could be removed)
+Each IP is reported at most once per 15 minutes (local cache).
 
-* [abuseipdb](abuseipdb.com) account, api token
+## Requirements
 
-## usage
+- [endlessh](https://github.com/skeeto/endlessh)
+- [curl](https://github.com/curl/curl)
+- An AbuseIPDB account + API token (free tier: 1000 reports / day)
 
-1. move your ssh port to some safer port (between 1024 and 65535)
-2. replace `<api-token>` with your abuseipdb api token in `report.sh`
-3. run `./tarpitReporter.sh`
+## Bare-metal usage
 
-=> IPs from stuck SSH login attempts are reported and logged in `reportedIps.txt`
+1. Move your real `sshd` to a non-standard port (anywhere between 1024 and 65535) so endlessh can bind `:22`.
+2. `export API_TOKEN=your-abuseipdb-token`
+3. `./tarpitReporter.sh`
 
+Reported IPs are appended to `reportedIps.txt`.
 
-## Docker Usage
-
-This project can be run in a Docker container. To do so, you'll need to have Docker installed on your machine.
-
-Build the Docker image with the following command:
+## Docker usage
 
 ```bash
-docker build -t endlessh-reporter .
+cp .env.example .env
+$EDITOR .env                      # set API_TOKEN
+docker compose up -d --build
+docker compose logs -f
 ```
 
-To run the Docker container, use the following command, replacing `your_api_token` with your actual API token:
+The compose file maps host `:22` to container `:2222` (endlessh runs unprivileged inside).
+Make sure the host's real `sshd` is on a different port first, or the bind will fail.
+
+To stop:
 
 ```bash
-docker run -it --rm -e API_TOKEN=your_api_token -p 2222:22 endlessh-reporter
+docker compose down
 ```
+
+## Notes
+
+- The bind family is `0` (IPv4 + IPv6). IPv6 attacker addresses are reported as-is.
+- Logs rotate at 10 MB × 3 files (configured in `docker-compose.yml`).
+- `reportedIps.txt` is for your own audit; trim or rotate as needed.
