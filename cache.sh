@@ -1,6 +1,6 @@
 #!/bin/sh
 PROG="$(basename $0)"
-DIR="/root/.cache/endlessh"
+DIR="${XDG_CACHE_HOME:-$HOME/.cache}/endlessh"
 mkdir -p "${DIR}"
 EXPIRY=900 # default to 15 minutes
 [ "$1" -eq "$1" ] 2>/dev/null && EXPIRY=$1 && shift
