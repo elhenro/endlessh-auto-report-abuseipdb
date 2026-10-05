@@ -1,0 +1,21 @@
+#!/bin/bash
+# fake curl: logs argv + the -K config, answers with $STUB_CODES (one http code per call, then 200)
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case ${args[i]} in
+    -o) out=${args[i+1]} ;;
+    -D) hdr=${args[i+1]} ;;
+    -K) cfg=${args[i+1]} ;;
+  esac
+done
+{
+  echo "ARGV: $*"
+  if [ "${cfg:-}" = - ]; then cat; elif [ -n "${cfg:-}" ]; then cat "$cfg"; fi | sed 's/^/CFG: /'
+} >> "$STUB_LOG"
+code=200
+if [ -s "$STUB_CODES" ]; then
+  code=$(head -1 "$STUB_CODES"); tail -n +2 "$STUB_CODES" > "$STUB_CODES.tmp"; mv "$STUB_CODES.tmp" "$STUB_CODES"
+fi
+[ -z "${hdr:-}" ] || printf 'HTTP/2 %s\r\nX-RateLimit-Remaining: 42\r\nRetry-After: %s\r\n\r\n' "$code" "${STUB_RETRY_AFTER:-}" > "$hdr"
+[ -z "${out:-}" ] || echo '{"errors":[{"detail":"stub"}]}' > "$out"
+printf '%s' "$code"

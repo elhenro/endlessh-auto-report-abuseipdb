@@ -1,14 +1,29 @@
 services:
   endlessh:
+    image: ghcr.io/elhenro/endlessh-auto-report-abuseipdb:latest
     build: .
-    image: endlessh-reporter
     container_name: endlessh-reporter
     restart: unless-stopped
+    init: true
     ports:
-      - "22:2222"
+      - "${HOST_PORT:-22}:2222"
     env_file: .env
+    volumes:
+      - reported:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 128m
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  reported:

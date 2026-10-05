@@ -1,8 +1,13 @@
 .git
+.github
 .gitignore
-*.md
 .env
 .env.*
 !.env.example
+*.md
+tests
+systemd
+install.sh
+docker-compose.yml
 reportedIps.txt
 data/
