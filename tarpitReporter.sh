@@ -36,7 +36,7 @@ ALLOWLIST=" ${ALLOWLIST//,/ } "
 HDR_FILE=$(mktemp)
 BODY_FILE=$(mktemp)
 ENDLESSH_PID=""
-# shellcheck disable=SC2329 # runs via trap
+# shellcheck disable=SC2317,SC2329 # runs via trap (old shellcheck says 2317, new 2329)
 cleanup() {
   trap - EXIT
   [ -z "$ENDLESSH_PID" ] || kill "$ENDLESSH_PID" 2>/dev/null || true
