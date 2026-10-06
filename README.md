@@ -8,7 +8,7 @@ SSH tarpit ([endlessh](https://github.com/skeeto/endlessh)) that stalls bots on 
 
 ## Quickstart
 
-You need a free [AbuseIPDB API key](https://www.abuseipdb.com/account/api) (1000 reports/day) and Docker, or a systemd host.
+You need a free [AbuseIPDB API key](https://www.abuseipdb.com/account/api) (1000 reports/day on the free tier, some accounts get more) and Docker, or a systemd host.
 
 ```bash
 git clone https://github.com/elhenro/endlessh-auto-report-abuseipdb.git
@@ -74,15 +74,36 @@ Environment variables (`.env` for docker, `/etc/endlessh-reporter/env` for syste
 | `TARPIT_MAX_CLIENTS` | `4096` | endlessh client limit |
 | `ENDLESSH_ARGS` | | extra endlessh flags, e.g. `-4` |
 | `DEDUPE_SECONDS` | `900` | do not re-report an IP within this window |
-| `CATEGORIES` | `18,22` | AbuseIPDB categories (`14` = port scan) |
+| `CATEGORIES` | `14,22` | AbuseIPDB categories (`14` port scan, `22` SSH) |
 | `REPORTED_FILE` | `reportedIps.txt` | audit log of successful reports, empty disables |
 | `CURL_TIMEOUT` | `10` | seconds before an API call is abandoned |
+| `EVENTS_DIR` | | write a [JSONL event log](#event-log) here, empty disables (systemd default: `/var/lib/endlessh-reporter/events`) |
+| `EVENTS_RETENTION_DAYS` | `30` | delete event files older than this |
 
 ## What gets reported
 
-Every TCP connection to the tarpit port, once per 15 minutes per IP. endlessh never sees credentials, so this is "someone connected to a port where no SSH service should be", not a proven login attempt. Internet scanners (Shodan, Censys, research crawlers) get reported too; add your own monitoring IPs to `ALLOWLIST`, or switch `CATEGORIES` to `14`.
+Every TCP connection to the tarpit port, once per 15 minutes per IP. endlessh never sees credentials, so the report says "Connected to SSH tarpit (endlessh), no login attempted" with categories port scan and SSH, not brute force. Internet scanners (Shodan, Censys, research crawlers) get reported too; add your own monitoring IPs to `ALLOWLIST`.
 
 Skipped: private, loopback, link-local, CGNAT and multicast addresses. When AbuseIPDB answers 429 (daily quota) reporting pauses until the quota resets instead of hammering the API.
+
+## Event log
+
+With `EVENTS_DIR` set, every visit is also written to `events-YYYY-MM-DD.jsonl` (UTC days, one JSON object per line), for dashboards or your own `jq`:
+
+```json
+{"t":1760000000,"e":"accept","ip":"203.0.113.7","a":"reported","q":2995}
+{"t":1760000812,"e":"close","ip":"203.0.113.7","s":812.345,"b":4096}
+```
+
+| field | meaning |
+|---|---|
+| `t` | unix time |
+| `e` | `accept` (bot connected) or `close` (bot gave up or was dropped) |
+| `a` | what happened to an accept: `reported`, `dedup` (already reported recently), `dry`, `paused` (quota exhausted), `failed`, `rejected` |
+| `q` | reports left today, on `reported` accepts |
+| `s`, `b` | seconds the bot was held and bytes endlessh sent it, on `close` |
+
+Private, loopback and allowlisted addresses are never written. Files are world readable (`0644`) so a dashboard under another user can read them. systemd writes them by default; for docker add `EVENTS_DIR=/events` and a writable volume for the container user (uid 65534). Files older than `EVENTS_RETENTION_DAYS` are deleted.
 
 ## Troubleshooting
 
@@ -100,7 +121,7 @@ Skipped: private, loopback, link-local, CGNAT and multicast addresses. When Abus
 - Docker: runs as `nobody`, read-only rootfs, all capabilities dropped, memory and pid limits. The key is passed to curl via a config descriptor, so it never shows up in `ps` or `/proc/<pid>/cmdline`.
 - Only strictly validated IP addresses leave the log parser; nothing from the network reaches a shell.
 - Keep `.env` at `chmod 600`. Report vulnerabilities per [SECURITY.md](SECURITY.md).
-- IP addresses are personal data under the GDPR. Reporting abusive IPs for network security is commonly covered by legitimate interest, but that call is yours. Docker logs rotate at 10 MB x 3; `reportedIps.txt` grows until you trim it.
+- IP addresses are personal data under the GDPR. Reporting abusive IPs for network security is commonly covered by legitimate interest, but that call is yours. Docker logs rotate at 10 MB x 3; `reportedIps.txt` grows until you trim it; event files are deleted after `EVENTS_RETENTION_DAYS`.
 
 ## Uninstall
 

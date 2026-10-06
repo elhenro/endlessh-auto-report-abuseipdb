@@ -85,6 +85,52 @@ printf '500\n' > "$WORK/codes"   # api down at startup: warn, keep running
 out=$(API_TOKEN=secrettoken run)
 ok "api error at startup is not fatal" grep -q 'continuing' <<< "$out"
 
+# --- events log
+EV="$WORK/events"
+close() { printf '2026-01-01T00:00:00Z CLOSE host=%s port=1 fd=4 time=%s bytes=%s\n' "$1" "$2" "$3"; }
+rm -rf "$EV"; mkdir -p "$EV"; touch -t 200001010000 "$EV/events-2000-01-01.jsonl"
+{ accept ::ffff:1.1.1.1; accept ::ffff:1.1.1.1; accept 2.2.2.2; accept ::ffff:10.0.0.5; accept 4.4.4.4
+  close ::ffff:1.1.1.1 12.345 96; close 10.0.0.5 1.000 1; close 4.4.4.4 1.000 1
+  close '1.1.1.1;id' 1.000 1; close 2.2.2.2 x 1; } > "$WORK/lines"
+: > "$WORK/codes"
+out=$(API_TOKEN=secrettoken ALLOWLIST=4.4.4.4 EVENTS_DIR="$EV" run)
+ev=$(cat "$EV"/events-2???-??-??.jsonl)
+ok "events: first visit is reported, with quota" grep -q '"e":"accept","ip":"1.1.1.1","a":"reported","q":42}' <<< "$ev"
+ok "events: repeat visit is dedup" grep -q '"e":"accept","ip":"1.1.1.1","a":"dedup"}' <<< "$ev"
+ok "events: close carries time and bytes" grep -q '"e":"close","ip":"1.1.1.1","s":12.345,"b":96}' <<< "$ev"
+ok "events: private and allowlisted ips are not recorded" no grep -qE '10\.0\.0\.5|4\.4\.4\.4' <<< "$ev"
+ok "events: malformed close lines are dropped" test "$(grep -c '"e":"close"' <<< "$ev")" = 1
+ok "events: every line is valid json" python3 -c 'import json,sys; [json.loads(l) for l in sys.stdin]' <<< "$ev"
+ok "events: files are world readable" bash -c '[[ $(ls -l "$0"/events-2???-??-??.jsonl) == -rw-r--r--* ]]' "$EV"
+ok "events: old files are pruned" no test -e "$EV/events-2000-01-01.jsonl"
+ok "report comment says no login was attempted" grep -q 'comment=Connected to SSH tarpit (endlessh), no login attempted' "$WORK/log"
+ok "default categories are 14,22" grep -q 'categories=14,22' "$WORK/log"
+
+rm -rf "$EV"
+{ accept 1.1.1.1; accept 2.2.2.2; accept 3.3.3.3; } > "$WORK/lines"
+printf '200\n422\n429\n' > "$WORK/codes"   # startup ok, 1.1.1.1 rejected, 2.2.2.2 hits quota, 3.3.3.3 is paused
+out=$(API_TOKEN=secrettoken EVENTS_DIR="$EV" run)
+ev=$(cat "$EV"/events-*.jsonl)
+ok "events: 422 is rejected" grep -q '"ip":"1.1.1.1","a":"rejected"}' <<< "$ev"
+ok "events: 429 is failed" grep -q '"ip":"2.2.2.2","a":"failed"}' <<< "$ev"
+ok "events: paused after 429" grep -q '"ip":"3.3.3.3","a":"paused"}' <<< "$ev"
+
+rm -rf "$EV"; : > "$WORK/codes"
+out=$(API_TOKEN=secrettoken DRY_RUN=1 EVENTS_DIR="$EV" run)
+ok "events: dry run is recorded" grep -q '"a":"dry"}' "$EV"/events-*.jsonl
+
+rm -rf "$EV"
+out=$(API_TOKEN=secrettoken run)
+ok "events are off unless EVENTS_DIR is set" no test -e "$EV"
+echo x > "$WORK/afile"
+out=$(API_TOKEN=secrettoken EVENTS_DIR="$WORK/afile/sub" run)
+ok "unusable EVENTS_DIR disables events, reporting goes on" grep -q 'events disabled' <<< "$out"
+ok "unusable EVENTS_DIR still reports" test "$(calls)" -ge 1
+out=$(API_TOKEN=secrettoken EVENTS_RETENTION_DAYS=0 run)
+ok "retention of 0 days is rejected" grep -q 'EVENTS_RETENTION_DAYS must be at least 1' <<< "$out"
+out=$(API_TOKEN=secrettoken EVENTS_RETENTION_DAYS=abc run)
+ok "non-numeric retention is rejected" grep -q 'EVENTS_RETENTION_DAYS must be a number' <<< "$out"
+
 # --- installer helpers
 inst() { # code, snippet: run a snippet with install.sh sourced and curl stubbed
   echo "$1" > "$WORK/codes"; : > "$WORK/log"

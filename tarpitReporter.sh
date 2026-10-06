@@ -14,16 +14,20 @@ fi
 . ./lib/ip.sh
 # shellcheck source=lib/abuseipdb.sh
 . ./lib/abuseipdb.sh
+# shellcheck source=lib/events.sh
+. ./lib/events.sh
 
 : "${TARPIT_PORT:=2222}" "${TARPIT_DELAY_MS:=10000}" "${TARPIT_MAX_CLIENTS:=4096}"
-: "${DRY_RUN:=0}" "${DEDUPE_SECONDS:=900}" "${CATEGORIES:=18,22}" "${CURL_TIMEOUT:=10}"
+: "${DRY_RUN:=0}" "${DEDUPE_SECONDS:=900}" "${CATEGORIES:=14,22}" "${CURL_TIMEOUT:=10}"
 : "${API_TOKEN:=}" "${ALLOWLIST:=}" "${ENDLESSH_ARGS:=}"
 : "${REPORTED_FILE=reportedIps.txt}" # empty disables the audit file
+: "${EVENTS_DIR=}" "${EVENTS_RETENTION_DAYS:=30}" # empty EVENTS_DIR disables the event log
 
-for v in TARPIT_PORT TARPIT_DELAY_MS TARPIT_MAX_CLIENTS DEDUPE_SECONDS CURL_TIMEOUT; do
+for v in TARPIT_PORT TARPIT_DELAY_MS TARPIT_MAX_CLIENTS DEDUPE_SECONDS CURL_TIMEOUT EVENTS_RETENTION_DAYS; do
   [[ ${!v} =~ ^[0-9]+$ ]] || die "$v must be a number"
 done
-[[ $CATEGORIES =~ ^[0-9]+(,[0-9]+)*$ ]] || die "CATEGORIES must look like 18,22"
+(( 10#$EVENTS_RETENTION_DAYS >= 1 )) || die "EVENTS_RETENTION_DAYS must be at least 1"
+[[ $CATEGORIES =~ ^[0-9]+(,[0-9]+)*$ ]] || die "CATEGORIES must look like 14,22"
 [[ $DRY_RUN == 0 || $DRY_RUN == 1 ]] || die "DRY_RUN must be 0 or 1"
 
 ALLOWLIST=${ALLOWLIST,,}
@@ -85,19 +89,35 @@ handle_accept() {
   extract_ip "$line" || { log "ignoring unparsable line: ${line:0:100}"; return 0; }
   if is_reserved "$IP"; then log "connect $IP -> skipped (private/reserved address)"; return 0; fi
   if is_allowlisted "$IP"; then log "connect $IP -> skipped (allowlisted)"; return 0; fi
-  if seen_recently "$IP"; then log "connect $IP -> skipped (reported < ${DEDUPE_SECONDS}s ago)"; return 0; fi
-  if [ "$DRY_RUN" = 1 ]; then log "connect $IP -> dry-run, not sent"; mark_seen "$IP"; return 0; fi
-  if (( SECONDS < PAUSED_UNTIL )); then
-    log "connect $IP -> skipped (reporting paused for $(( PAUSED_UNTIL - SECONDS ))s)"
+  if seen_recently "$IP"; then
+    log "connect $IP -> skipped (reported < ${DEDUPE_SECONDS}s ago)"
+    event_accept "$IP" dedup
     return 0
   fi
+  if [ "$DRY_RUN" = 1 ]; then log "connect $IP -> dry-run, not sent"; mark_seen "$IP"; event_accept "$IP" dry; return 0; fi
+  if (( SECONDS < PAUSED_UNTIL )); then
+    log "connect $IP -> skipped (reporting paused for $(( PAUSED_UNTIL - SECONDS ))s)"
+    event_accept "$IP" paused
+    return 0
+  fi
+  REPORT_QUOTA=""
   report_ip "$IP" "$line" || rc=$?
   case $rc in
-    0) record_reported "$IP"; mark_seen "$IP" ;;
-    2) mark_seen "$IP" ;;
+    0) record_reported "$IP"; mark_seen "$IP"; event_accept "$IP" reported "$REPORT_QUOTA" ;;
+    2) mark_seen "$IP"; event_accept "$IP" rejected ;;
+    *) event_accept "$IP" failed ;;
   esac
 }
 
+# endlessh "CLOSE host=<ip> port=<n> fd=<n> time=<secs> bytes=<n>": how long a bot was held
+handle_close() {
+  local line=$1
+  extract_ip "$line" && ! is_reserved "$IP" && ! is_allowlisted "$IP" || return 0
+  [[ $line =~ time=([0-9]+(\.[0-9]+)?)[[:space:]]bytes=([0-9]+) ]] || return 0
+  event_close "$IP" "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+}
+
+events_init
 read -ra extra_args <<< "$ENDLESSH_ARGS"
 log "starting endlessh on port $TARPIT_PORT (dry-run=$DRY_RUN, dedupe=${DEDUPE_SECONDS}s)"
 # endlessh logs to stderr; merge it into the pipe. env -u keeps the token out of its environment
@@ -108,7 +128,7 @@ ENDLESSH_PID=$!
 while IFS= read -r -u 3 line; do
   case $line in
     *ACCEPT\ host=*) handle_accept "$line" ;;
-    *CLOSE\ host=*) ;;
+    *CLOSE\ host=*) handle_close "$line" ;;
     *) log "endlessh: $line" ;; # startup info and errors like "address already in use"
   esac
 done

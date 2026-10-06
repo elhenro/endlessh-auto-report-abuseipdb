@@ -6,6 +6,7 @@
 readonly API_BASE=https://api.abuseipdb.com/api/v2
 PAUSED_UNTIL=0
 HTTP_CODE=000
+REPORT_QUOTA="" # reports left today, set by a successful report_ip
 
 load_token() {
   if [ -z "$API_TOKEN" ] && [ -n "${API_TOKEN_FILE:-}" ]; then
@@ -57,9 +58,9 @@ check_token() {
 # returns 0 reported, 1 failed (retry on a later connect), 2 rejected by api (do not retry)
 report_ip() { # ip message
   api_call report --data-urlencode "ip=$1" -d "categories=$CATEGORIES" \
-    --data-urlencode "comment=SSH login attempts (endlessh): $2"
+    --data-urlencode "comment=Connected to SSH tarpit (endlessh), no login attempted: $2"
   case $HTTP_CODE in
-    200) log "connect $1 -> reported (quota left: $(header_value x-ratelimit-remaining))" ;;
+    200) REPORT_QUOTA=$(header_value x-ratelimit-remaining); log "connect $1 -> reported (quota left: $REPORT_QUOTA)" ;;
     422) log "connect $1 -> rejected by AbuseIPDB: $(head -c 200 "$BODY_FILE")"; return 2 ;;
     429) pause_for "$(header_value retry-after)" 3600 "daily quota exhausted"; return 1 ;;
     401|403) pause_for 3600 3600 "token rejected (HTTP $HTTP_CODE)"; return 1 ;;

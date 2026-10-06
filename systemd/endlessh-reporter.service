@@ -8,13 +8,18 @@ Wants=network-online.target
 ExecStart=/opt/endlessh-reporter/tarpitReporter.sh
 EnvironmentFile=/etc/endlessh-reporter/env
 Environment=REPORTED_FILE=/var/lib/endlessh-reporter/reportedIps.txt
+Environment=EVENTS_DIR=/var/lib/endlessh-reporter/events
 # token is handed over as a credential file, never an env var or argv
 LoadCredential=api_token:/etc/endlessh-reporter/api_token
 StateDirectory=endlessh-reporter
+# one fd per stuck client; systemd's soft default of 1024 is below TARPIT_MAX_CLIENTS
+LimitNOFILE=8192
 Restart=on-failure
 RestartSec=5
 # config errors (bad token, bad settings) exit 78: do not loop on them
 RestartPreventExitStatus=78
+# the reporter exits 143 on SIGTERM; that is a clean stop, not a failure
+SuccessExitStatus=143
 
 # unprivileged throwaway user that may still bind port 22
 DynamicUser=yes
