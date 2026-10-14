@@ -1,8 +1,10 @@
 # pinned by digest; dependabot proposes updates
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
+# upgrade picks up security fixes the pinned base digest lags behind on
 # hadolint ignore=DL3008
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends endlessh curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir /data && chown nobody:nogroup /data
