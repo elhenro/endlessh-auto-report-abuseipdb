@@ -1,3 +1,0 @@
-#!/bin/bash
-# fake endlessh: replays the lines in $STUB_LINES, then exits
-cat "$STUB_LINES"

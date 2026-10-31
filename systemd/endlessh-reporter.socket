@@ -1,0 +1,12 @@
+[Unit]
+Description=Port of the SSH tarpit, held by systemd so the service needs no capabilities
+Documentation=https://github.com/elhenro/endlessh-auto-report-abuseipdb
+
+[Socket]
+# install.sh sets this from TARPIT_PORT
+ListenStream=22
+BindIPv6Only=both
+Backlog=1024
+
+[Install]
+WantedBy=sockets.target

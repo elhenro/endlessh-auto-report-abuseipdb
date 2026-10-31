@@ -1,27 +1,27 @@
-# pinned by digest; dependabot proposes updates
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+# both bases are pinned by digest; dependabot proposes updates
+FROM rust:1.92-slim-bookworm@sha256:f1f73538ebe623fd3673a35aff3df358ae1084c64c55646516e5b17b321b6c9b AS build
+# the final image has no shell to create the volume mount point with
+RUN mkdir /data
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo build --release --locked
 
-# upgrade picks up security fixes the pinned base digest lags behind on
-# hadolint ignore=DL3008
-RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends endlessh curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir /data && chown nobody:nogroup /data
+# no shell, perl or package manager for an intruder to use; same bookworm glibc as the build.
+# no ca certificates needed: the binary bundles its own roots
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
 
-WORKDIR /app
-COPY --chmod=755 tarpitReporter.sh ./
-COPY --chmod=755 lib ./lib
+COPY --from=build --chown=65534:65534 /data /data
+COPY --from=build /src/target/release/endlessh-reporter /usr/local/bin/endlessh-reporter
 
-ENV REPORTED_FILE=/data/reportedIps.txt
 VOLUME /data
 USER 65534:65534
 
-# endlessh listens on 2222 (unprivileged); publish it as host:22
+# listens on 2222 (unprivileged); publish it as host:22
 EXPOSE 2222
 
 # port check via /proc, no connection, so it never shows up as a visitor
 HEALTHCHECK --interval=60s --timeout=5s --start-period=20s \
-  CMD ["sh", "-c", "grep -qiE \":$(printf '%04X' \"${TARPIT_PORT:-2222}\") [0-9A-F:]+ 0A \" /proc/net/tcp /proc/net/tcp6"]
+  CMD ["/usr/local/bin/endlessh-reporter", "--healthcheck"]
 
-CMD ["./tarpitReporter.sh"]
+CMD ["/usr/local/bin/endlessh-reporter"]
