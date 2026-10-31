@@ -39,6 +39,7 @@ dependencies = [
 name = "endlessh-reporter"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "socket2",
  "ureq",
  "url",

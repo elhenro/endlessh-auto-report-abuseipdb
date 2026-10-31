@@ -94,3 +94,34 @@ fn no_sinks_means_dry() {
         [r#"{"t":1760000000,"e":"accept","ip":"8.8.8.8","a":"dry"}"#]
     );
 }
+
+#[test]
+fn a_client_that_is_no_ssh_client_reaches_no_sink() {
+    let (base, seen) = mock_api("200 OK", "", "{}");
+    let t = 1_760_000_000;
+    let not_ssh = |ip: &str| Event::Accept {
+        t,
+        ip: ip.parse().unwrap(),
+        port: 40000,
+        ssh: false,
+    };
+    let lines = run_worker(
+        vec![abuse(&base)],
+        "9.9.9.9",
+        vec![
+            not_ssh("8.8.8.8"),
+            not_ssh("10.0.0.1"),  // reserved: no event, as always
+            not_ssh("9.9.9.9"),   // allowlisted: no event, as always
+            accept(t, "8.8.8.8"), // the same ip as a real client still gets reported
+        ],
+        "not-ssh",
+    );
+    assert_eq!(
+        lines,
+        [
+            r#"{"t":1760000000,"e":"accept","ip":"8.8.8.8","a":"not_ssh"}"#,
+            r#"{"t":1760000000,"e":"accept","ip":"8.8.8.8","a":"reported"}"#,
+        ]
+    );
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}

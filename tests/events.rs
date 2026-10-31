@@ -4,8 +4,9 @@ use endlessh_reporter::events::EventLog;
 use std::{
     fs::{self, Permissions},
     net::IpAddr,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{symlink, PermissionsExt},
     path::PathBuf,
+    process::Command,
 };
 
 #[test]
@@ -75,6 +76,47 @@ fn directory_modes() {
         assert_eq!(mode(&dir), writable, "refusing must not touch it");
     }
     fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_prepared_file_name_cannot_redirect_or_hang_the_log() {
+    let dir = test_dir("planted");
+    let ip: IpAddr = "8.8.8.8".parse().unwrap();
+    let mut log = EventLog::open(dir.clone(), 3650, u64::MAX).unwrap();
+    let victim = std::env::temp_dir().join(format!("events-victim-{}", std::process::id()));
+    fs::write(&victim, "secret\n").unwrap();
+    fs::set_permissions(&victim, Permissions::from_mode(0o600)).unwrap();
+    let untouched = |why: &str| {
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "secret\n", "{why}");
+        assert_eq!(mode(&victim), 0o600, "{why}");
+    };
+
+    // a day per trap: the name each one sits on is the file that day would use
+    symlink(&victim, dir.join("events-1970-01-11.jsonl")).unwrap();
+    log.accept(86_400 * 10, ip, "dry", None);
+    untouched("symlink");
+
+    fs::hard_link(&victim, dir.join("events-1970-01-12.jsonl")).unwrap();
+    log.accept(86_400 * 11, ip, "dry", None);
+    untouched("hard link");
+
+    // would block forever on open without a reader, and this test would hang with it
+    let fifo = dir.join("events-1970-01-13.jsonl");
+    assert!(Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    log.accept(86_400 * 12, ip, "dry", None);
+
+    fs::create_dir(dir.join("events-1970-01-14.jsonl")).unwrap();
+    log.accept(86_400 * 13, ip, "dry", None);
+
+    log.accept(86_400 * 14, ip, "dry", None);
+    let next = fs::read_to_string(dir.join("events-1970-01-15.jsonl")).unwrap();
+    assert!(next.contains("\"a\":\"dry\""), "the next day logs again");
+    fs::remove_dir_all(&dir).unwrap();
+    fs::remove_file(&victim).unwrap();
 }
 
 #[test]

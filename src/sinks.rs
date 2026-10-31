@@ -23,6 +23,13 @@ pub enum Outcome {
     Failed,
     /// no sink configured
     Dry,
+    /// never said it speaks ssh: nothing to report
+    NotSsh,
+}
+
+/// ureq hands 1xx over as a response too, and with redirects off 3xx as well: neither did the job
+pub fn is_success(status: u16) -> bool {
+    (200..300).contains(&status)
 }
 
 impl Outcome {
@@ -36,6 +43,7 @@ impl Outcome {
             Outcome::Paused => "paused",
             Outcome::Failed => "failed",
             Outcome::Dry => "dry",
+            Outcome::NotSsh => "not_ssh",
         }
     }
 

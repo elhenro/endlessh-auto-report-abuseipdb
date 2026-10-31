@@ -2,7 +2,7 @@
 
 use endlessh_reporter::tarpit::{self, Event, Params};
 use std::{
-    io::Read,
+    io::{Read, Write},
     net::{IpAddr, TcpListener, TcpStream},
     sync::mpsc,
     time::Duration,
@@ -22,6 +22,13 @@ fn start_tarpit(max_clients: usize) -> (u16, mpsc::Receiver<Event>) {
     (port, rx)
 }
 
+/// says what an ssh client says, so the tarpit announces it on its first tick
+fn ssh_client(port: u16) -> TcpStream {
+    let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    c.write_all(b"SSH-2.0-test\r\n").unwrap();
+    c
+}
+
 fn expect_close(rx: &mpsc::Receiver<Event>) -> (IpAddr, u64) {
     loop {
         match rx
@@ -37,7 +44,7 @@ fn expect_close(rx: &mpsc::Receiver<Event>) -> (IpAddr, u64) {
 #[test]
 fn tarpit_dribbles_lines_and_reports_close() {
     let (port, rx) = start_tarpit(10);
-    let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut c = ssh_client(port);
     c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let mut got = Vec::new();
     let mut buf = [0u8; 256];
@@ -58,8 +65,8 @@ fn tarpit_dribbles_lines_and_reports_close() {
 #[test]
 fn tarpit_stops_accepting_at_max_clients() {
     let (port, rx) = start_tarpit(1);
-    let first = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    let _second = TcpStream::connect(("127.0.0.1", port)).unwrap(); // sits in the kernel backlog
+    let first = ssh_client(port);
+    let _second = ssh_client(port); // sits in the kernel backlog
     assert!(matches!(
         rx.recv_timeout(Duration::from_secs(2)).unwrap(),
         Event::Accept { .. }
@@ -77,4 +84,34 @@ fn tarpit_stops_accepting_at_max_clients() {
         ),
         "slot freed, second client accepted"
     );
+}
+
+#[test]
+fn the_accept_event_says_what_the_client_is_and_comes_before_its_close() {
+    let (port, rx) = start_tarpit(10);
+    let announced = |first_bytes: &[u8], close: bool| {
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        c.write_all(first_bytes).unwrap();
+        if close {
+            drop(c);
+            let ev = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let Event::Accept { ssh, .. } = ev else {
+                panic!("close before accept")
+            };
+            expect_close(&rx);
+            return ssh;
+        }
+        match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+            Event::Accept { ssh, .. } => {
+                drop(c);
+                expect_close(&rx);
+                ssh
+            }
+            Event::Close { .. } => panic!("close before accept"),
+        }
+    };
+    assert!(announced(b"SSH-2.0-OpenSSH_9.9\r\n", false));
+    assert!(!announced(b"GET / HTTP/1.1\r\n\r\n", false), "a browser");
+    assert!(!announced(b"\x16\x03\x01\x02\x00", false), "tls");
+    assert!(!announced(b"", true), "a port check");
 }

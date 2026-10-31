@@ -10,12 +10,19 @@ use std::{
 /// on the listener too, so on linux a queued connection holds about 1 KB instead of 126 KB
 pub const RECV_BUFFER: usize = 1;
 
+/// a client that never reads pins whatever is queued for it. without this that reaches about 47 KB
+/// per client, and 4096 of them get the container killed at its 128 MB limit. linux doubles this to
+/// its minimum, 4608; macos takes it literally, and much less would cut every banner line short
+pub const SEND_BUFFER: usize = 2304;
+
 /// the listener systemd passed in (socket activation), else a dual-stack socket on `port`
 pub fn listen(port: u16) -> io::Result<TcpListener> {
     if let Some(l) = inherited() {
         // a closed or non-socket fd 3 fails here instead of as an endless accept error loop
         l.local_addr()?;
-        SockRef::from(&l).set_recv_buffer_size(RECV_BUFFER)?;
+        let s = SockRef::from(&l);
+        s.set_recv_buffer_size(RECV_BUFFER)?;
+        s.set_send_buffer_size(SEND_BUFFER)?;
         return Ok(l);
     }
     let bind = |domain: Domain, addr: SocketAddr| -> io::Result<TcpListener> {
@@ -26,6 +33,7 @@ pub fn listen(port: u16) -> io::Result<TcpListener> {
         }
         s.bind(&addr.into())?;
         s.set_recv_buffer_size(RECV_BUFFER)?;
+        s.set_send_buffer_size(SEND_BUFFER)?;
         s.listen(1024)?;
         Ok(s.into())
     };
@@ -65,13 +73,14 @@ mod tests {
     use std::net::TcpStream;
 
     #[test]
-    fn accepted_sockets_inherit_the_small_buffer() {
+    fn accepted_sockets_inherit_the_small_buffers() {
         let l = listen(0).unwrap();
         let port = l.local_addr().unwrap().port();
         let _client = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let (accepted, _) = l.accept().unwrap();
-        // the kernel rounds up to 2304; its default is far above this
-        let size = SockRef::from(&accepted).recv_buffer_size().unwrap();
-        assert!(size <= 4096, "{size}");
+        // the kernel rounds up to 2304 and 4608; its defaults are far above these
+        let s = SockRef::from(&accepted);
+        let (recv, send) = (s.recv_buffer_size().unwrap(), s.send_buffer_size().unwrap());
+        assert!(recv <= 4096 && send <= 8192, "{recv} {send}");
     }
 }

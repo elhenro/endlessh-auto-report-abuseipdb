@@ -16,6 +16,11 @@ LoadCredential=api_token:/etc/endlessh-reporter/api_token
 StateDirectory=endlessh-reporter
 # one fd per stuck client; systemd's soft default of 1024 is below TARPIT_MAX_CLIENTS
 LimitNOFILE=8192
+# a core file would hold the token
+LimitCORE=0
+# the same ceilings as the compose file; 4096 stuck clients stay well below this
+MemoryMax=128M
+TasksMax=128
 Restart=on-failure
 RestartSec=5
 # config errors (bad token, bad settings) exit 78: do not loop on them

@@ -45,6 +45,14 @@ pub fn network(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// the block one operator usually holds whole: a v4 /24 or a v6 /48. a /56 is cheap, but it is 256 /64s of one site
+pub fn site(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V4(a) => IpAddr::V4((u32::from(a) & (u32::MAX << 8)).into()),
+        IpAddr::V6(a) => IpAddr::V6((u128::from(a) & (u128::MAX << 80)).into()),
+    }
+}
+
 /// plain ips and cidr ranges, comma or space separated
 #[derive(Default)]
 pub struct AllowList(Vec<(IpAddr, u8)>);
@@ -138,6 +146,14 @@ mod tests {
         assert_ne!(network(ip("2a00:1450:1:3::9")), ip("2a00:1450:1:2::"));
         assert_eq!(network(ip("8.8.8.8")), ip("8.8.8.8"));
         assert_eq!(network(ip("::ffff:8.8.8.8")), ip("8.8.8.8"));
+    }
+
+    #[test]
+    fn site_groups_v6_by_48_and_v4_by_24() {
+        assert_eq!(site(ip("2a00:1450:1:ffff::9")), ip("2a00:1450:1::"));
+        assert_ne!(site(ip("2a00:1450:2::9")), ip("2a00:1450:1::"));
+        assert_eq!(site(ip("8.8.8.200")), ip("8.8.8.0"));
+        assert_eq!(site(ip("::ffff:8.8.8.200")), ip("8.8.8.0"));
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub mod banner;
 pub mod config;
 mod dates;
 pub mod events;
+mod hello;
 pub mod ip;
 pub mod listen;
 pub mod sinks;

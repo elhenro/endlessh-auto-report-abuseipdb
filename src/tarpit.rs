@@ -1,9 +1,11 @@
 //! the tarpit itself: accept connections and dribble random banner lines forever.
-//! it never reads from a client, so nothing a client sends is ever parsed.
+//! it never reads from a client, so nothing a client sends is ever parsed. the one look it
+//! takes is a peek at the first bytes, see hello.rs.
 
 use crate::{
     accept::accept_loop,
     banner::{banner, seed},
+    hello,
     slots::Slots,
     throttle::Throttled,
 };
@@ -20,10 +22,12 @@ use std::{
 };
 
 pub enum Event {
+    /// sent once the client has shown what it is, so up to hello::HELLO_WAIT after `t`
     Accept {
         t: u64,
         ip: IpAddr,
         port: u16,
+        ssh: bool,
     },
     Close {
         t: u64,
@@ -44,9 +48,12 @@ pub struct Params {
 pub(crate) struct Client {
     pub stream: TcpStream,
     pub ip: IpAddr,
+    pub port: u16,
+    pub t: u64,
     pub since: Instant,
     pub next: Instant,
     pub bytes: u64,
+    pub announced: bool,
 }
 
 pub fn now_unix() -> u64 {
@@ -59,10 +66,10 @@ pub fn now_unix() -> u64 {
 pub fn spawn(listener: TcpListener, p: Params, events: SyncSender<Event>) -> JoinHandle<()> {
     let slots = Arc::new(Slots::new(p.max_clients, p.max_per_ip));
     let (new_tx, new_rx) = mpsc::channel();
-    let (s, e) = (slots.clone(), Emitter::new(events.clone()));
+    let s = slots.clone();
     thread::Builder::new()
         .name("accept".into())
-        .spawn(move || accept_loop(listener, p, s, new_tx, e))
+        .spawn(move || accept_loop(listener, p, s, new_tx))
         .expect("spawn accept thread");
     thread::Builder::new()
         .name("clients".into())
@@ -71,7 +78,7 @@ pub fn spawn(listener: TcpListener, p: Params, events: SyncSender<Event>) -> Joi
 }
 
 /// never blocks the tarpit: a full queue drops the event and says so once a minute
-pub(crate) struct Emitter {
+struct Emitter {
     tx: SyncSender<Event>,
     dropped: Throttled,
 }
@@ -84,11 +91,21 @@ impl Emitter {
         }
     }
 
-    pub fn emit(&mut self, ev: Event) {
+    fn emit(&mut self, ev: Event) {
         if self.tx.try_send(ev).is_err() {
             self.dropped
                 .hit(|n| log!("warning: worker queue full, dropped {n} events"));
         }
+    }
+
+    fn announce(&mut self, c: &mut Client, ssh: bool) {
+        c.announced = true;
+        self.emit(Event::Accept {
+            t: c.t,
+            ip: c.ip,
+            port: c.port,
+            ssh,
+        });
     }
 }
 
@@ -99,12 +116,20 @@ fn client_loop(incoming: Receiver<Client>, p: Params, slots: Arc<Slots>, mut ev:
         let now = Instant::now();
         while queue.front().is_some_and(|c| c.next <= now) {
             let mut c = queue.pop_front().expect("front checked");
+            if !c.announced {
+                if let Some(ssh) = hello::verdict(&c.stream, c.since.elapsed()) {
+                    ev.announce(&mut c, ssh);
+                }
+            }
             match send_line(&mut c, p.max_line, &mut rng) {
                 Ok(()) => {
                     c.next = now + p.delay;
                     enqueue(&mut queue, c);
                 }
                 Err(_) => {
+                    if !c.announced {
+                        ev.announce(&mut c, false);
+                    }
                     slots.release(c.ip);
                     ev.emit(Event::Close {
                         t: now_unix(),

@@ -1,9 +1,10 @@
 //! takes connections off the listener, within the slot limits
 
 use crate::{
-    listen::RECV_BUFFER,
+    hello::HELLO_WAIT,
+    listen::{RECV_BUFFER, SEND_BUFFER},
     slots::Slots,
-    tarpit::{now_unix, Client, Emitter, Event, Params},
+    tarpit::{now_unix, Client, Params},
     throttle::Throttled,
 };
 use socket2::SockRef;
@@ -23,12 +24,18 @@ pub(crate) fn accept_loop(
     p: Params,
     slots: Arc<Slots>,
     out: Sender<Client>,
-    mut ev: Emitter,
 ) {
-    let (mut errors, mut refused) = (Throttled::default(), Throttled::default());
+    let (mut errors, mut refused, mut at_cap) = (
+        Throttled::default(),
+        Throttled::default(),
+        Throttled::default(),
+    );
     loop {
         // at the cap, leave new connections in the kernel backlog instead of accepting
         if slots.full() {
+            at_cap.hit(|_| {
+                log!("warning: at TARPIT_MAX_CLIENTS, new visitors wait in the backlog and get no report")
+            });
             thread::sleep(Duration::from_millis(50));
             continue;
         }
@@ -50,29 +57,34 @@ pub(crate) fn accept_loop(
                 continue;
             }
         };
-        let _ = SockRef::from(&stream).set_recv_buffer_size(RECV_BUFFER); // macos does not inherit it
+        // macos does not inherit these from the listener
+        let sock = SockRef::from(&stream);
+        let _ = sock.set_recv_buffer_size(RECV_BUFFER);
+        let _ = sock.set_send_buffer_size(SEND_BUFFER);
         if stream.set_nonblocking(true).is_err() {
             continue;
         }
         let ip = peer.ip().to_canonical();
         // no event: a client looping here must cost neither log lines nor api calls
         if !slots.acquire(ip) {
-            refused.hit(|n| log!("over TARPIT_MAX_PER_IP, closed: {n}, last from {ip}"));
+            refused.hit(|n| {
+                log!(
+                    "over TARPIT_MAX_PER_IP or its share of the slots, closed: {n}, last from {ip}"
+                )
+            });
             continue;
         }
-        ev.emit(Event::Accept {
-            t: now_unix(),
-            ip,
-            port: peer.port(),
-        });
         let now = Instant::now();
         if out
             .send(Client {
                 stream,
                 ip,
+                port: peer.port(),
+                t: now_unix(),
                 since: now,
-                next: now + p.delay,
+                next: now + p.delay.min(HELLO_WAIT),
                 bytes: 0,
+                announced: false,
             })
             .is_err()
         {

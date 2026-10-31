@@ -9,5 +9,6 @@ secrets
 *.md
 systemd
 install.sh
+install-ports.sh
 docker-compose.yml
 data/

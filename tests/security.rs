@@ -78,12 +78,13 @@ fn every_slot_frees_up_when_clients_leave() {
     let _t = Running::start(
         command(BIN)
             .env("TARPIT_PORT", port.to_string())
-            .env("TARPIT_MAX_CLIENTS", "4"),
+            .env("TARPIT_MAX_CLIENTS", "8"),
     );
-    // a leaked slot stalls a later round: its client waits in the backlog until the read times out
+    // loopback gets half the slots. a leaked one fails a later round: its client is closed unserved
     for _ in 0..3 {
         let clients: Vec<_> = (0..4).map(|_| visit(port)).collect();
         drop(clients);
+        thread::sleep(Duration::from_millis(200)); // the tarpit notices on a later banner line
     }
 }
 

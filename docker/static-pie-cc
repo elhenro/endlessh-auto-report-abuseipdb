@@ -1,0 +1,15 @@
+#!/bin/sh
+# rustc knows static-pie on x86_64 musl only. on aarch64 it links -static -no-pie with non-pie startup
+# files, which puts the code at a fixed address. this turns that link into a static-pie one
+n=$#
+while [ "$n" -gt 0 ]; do
+  arg=$1
+  shift
+  n=$((n - 1))
+  case $arg in
+    -static | -no-pie) ;;
+    */crt1.o) set -- "$@" "${arg%crt1.o}rcrt1.o" ;;
+    *) set -- "$@" "$arg" ;;
+  esac
+done
+exec cc -static-pie "$@"

@@ -1,17 +1,36 @@
 //! append-only jsonl event log for dashboards; one file per utc day: events-YYYY-MM-DD.jsonl
 //!   {"t":1760000000,"e":"accept","ip":"1.2.3.4","a":"reported","q":2995}
 //!   {"t":1760000812,"e":"close","ip":"1.2.3.4","s":812.345,"b":4096}
-//! a = reported|delivered|dedup|dry|paused|failed|rejected, q = api quota left, s = seconds held, b = bytes sent
+//! a = reported|delivered|dedup|dry|paused|failed|rejected|not_ssh, q = api quota left, s = seconds held, b = bytes sent
 //! values are numbers, fixed words or formatted ips, so no json escaping is needed
 
 use crate::dates::{date_string, parse_date};
 use std::{
     fs::{self, DirBuilder, File, OpenOptions, Permissions},
-    io::Write,
+    io::{self, Write},
     net::IpAddr,
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
-    path::PathBuf,
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
 };
+
+/// today's file. whoever else can write to the directory may have prepared this name: a symlink would
+/// have the chmod and the appends land on another file, a fifo would hang the worker
+fn open_day_file(dir: &Path, path: &Path) -> io::Result<File> {
+    let f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let m = f.metadata()?;
+    if !m.is_file() || m.nlink() != 1 || m.uid() != fs::metadata(dir)?.uid() {
+        return Err(io::Error::other(
+            "not a plain file owned by the directory's owner",
+        ));
+    }
+    f.set_permissions(Permissions::from_mode(0o644))?;
+    Ok(f)
+}
 
 pub struct EventLog {
     dir: PathBuf,
@@ -94,17 +113,13 @@ impl EventLog {
     fn rotate(&mut self, day: i64) {
         self.open_day = day;
         let path = self.dir.join(format!("events-{}.jsonl", date_string(day)));
-        let opened = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o644)
-            .open(&path)
-            .and_then(|f| {
-                f.set_permissions(Permissions::from_mode(0o644))?;
-                Ok(f)
-            });
-        self.file = opened
-            .map_err(|e| log!("warning: cannot open {}: {e}", path.display()))
+        self.file = open_day_file(&self.dir, &path)
+            .map_err(|e| {
+                log!(
+                    "warning: no events today, cannot open {}: {e}",
+                    path.display()
+                )
+            })
             .ok();
         // what is already there counts, or every restart would hand out a fresh budget
         self.written = self

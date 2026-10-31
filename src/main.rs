@@ -73,8 +73,8 @@ fn main() {
     if !names.is_empty() && cfg.public_port.or(bound_port).is_some_and(|p| p != 22) {
         log!(
             "warning: reporting visitors on a port other than 22. browsers refuse to connect to 22 \
-             but not here, so any web page can send its visitors to this port and get them reported. \
-             set DRY_RUN=1 until the tarpit is on 22"
+             but not here, and a web page using dns rebinding can make them open with SSH- and get \
+             their users reported. set DRY_RUN=1 until the tarpit is on 22"
         );
     }
     log!(

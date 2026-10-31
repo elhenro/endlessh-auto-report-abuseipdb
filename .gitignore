@@ -1,4 +1,6 @@
 /target
 .env
+.env.*
+!.env.example
 secrets/
 data/

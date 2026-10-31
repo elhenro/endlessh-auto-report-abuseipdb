@@ -14,13 +14,54 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// stands in when nothing is configured, so dedupe and the event log work the same
+struct Dry;
+
+impl Sink for Dry {
+    fn name(&self) -> &'static str {
+        "dry"
+    }
+
+    fn send(&mut self, _: &Visit) -> Outcome {
+        Outcome::Dry
+    }
+}
+
+/// one sink with its own memory: another sink being paused or down must not make this one repeat or skip visits
+struct Tracked {
+    sink: Box<dyn Sink>,
+    seen: HashMap<IpAddr, Instant>, // by network: rotating within a v6 /64 must not burn quota
+    last_prune: Instant,
+}
+
+impl Tracked {
+    /// None: this network went through here within the dedupe window
+    fn visit(&mut self, v: &Visit, dedupe: Duration) -> Option<Outcome> {
+        let net = network(v.ip);
+        if self.seen.get(&net).is_some_and(|s| s.elapsed() < dedupe) {
+            return None;
+        }
+        let outcome = self.sink.send(v);
+        if outcome.settled() {
+            self.mark_seen(net, dedupe);
+        }
+        Some(outcome)
+    }
+
+    fn mark_seen(&mut self, net: IpAddr, dedupe: Duration) {
+        self.seen.insert(net, Instant::now());
+        if self.seen.len() > 5000 && self.last_prune.elapsed() >= Duration::from_secs(60) {
+            self.last_prune = Instant::now();
+            self.seen.retain(|_, s| s.elapsed() < dedupe);
+        }
+    }
+}
+
 pub struct Worker {
     allow: AllowList,
     dedupe: Duration,
-    sinks: Vec<Box<dyn Sink>>,
+    sinks: Vec<Tracked>,
     events: Option<EventLog>,
-    seen: HashMap<IpAddr, Instant>, // by network: rotating within a v6 /64 must not burn quota
-    last_prune: Instant,
 }
 
 impl Worker {
@@ -28,16 +69,24 @@ impl Worker {
     pub fn new(
         allow: AllowList,
         dedupe: Duration,
-        sinks: Vec<Box<dyn Sink>>,
+        mut sinks: Vec<Box<dyn Sink>>,
         events: Option<EventLog>,
     ) -> Self {
+        if sinks.is_empty() {
+            sinks.push(Box::new(Dry));
+        }
         Self {
             allow,
             dedupe,
-            sinks,
+            sinks: sinks
+                .into_iter()
+                .map(|sink| Tracked {
+                    sink,
+                    seen: HashMap::new(),
+                    last_prune: Instant::now(),
+                })
+                .collect(),
             events,
-            seen: HashMap::new(),
-            last_prune: Instant::now(),
         }
     }
 
@@ -45,7 +94,7 @@ impl Worker {
     pub fn run(mut self, rx: Receiver<Event>) {
         for ev in rx {
             match ev {
-                Event::Accept { t, ip, port } => self.accept(t, ip, port),
+                Event::Accept { t, ip, port, ssh } => self.accept(t, ip, port, ssh),
                 Event::Close { t, ip, secs, bytes } => self.close(t, ip, secs, bytes),
             }
         }
@@ -61,33 +110,38 @@ impl Worker {
         }
     }
 
-    fn accept(&mut self, t: u64, ip: IpAddr, port: u16) {
+    fn accept(&mut self, t: u64, ip: IpAddr, port: u16, ssh: bool) {
         if let Some(why) = self.ignored(ip) {
             log!("connect {ip} -> skipped ({why})");
             return;
         }
-        if self
-            .seen
-            .get(&network(ip))
-            .is_some_and(|s| s.elapsed() < self.dedupe)
-        {
-            log!(
-                "connect {ip} -> skipped (reported < {}s ago)",
-                self.dedupe.as_secs()
-            );
-            return self.record(t, ip, Outcome::Dedup);
+        if !ssh {
+            log!("connect {ip} -> skipped (not an ssh client)");
+            return self.record(t, ip, Outcome::NotSsh);
         }
         let visit = Visit { t, ip, port };
-        let outcomes: Vec<Outcome> = self.sinks.iter_mut().map(|s| s.send(&visit)).collect();
-        let primary = outcomes.first().copied().unwrap_or(Outcome::Dry);
-        match primary.quota() {
-            Some(q) => log!("connect {ip} -> {} (quota left: {q})", primary.action()),
-            None => log!("connect {ip} -> {}", primary.action()),
+        let dedupe = self.dedupe;
+        let outcomes: Vec<_> = self
+            .sinks
+            .iter_mut()
+            .map(|s| s.visit(&visit, dedupe))
+            .collect();
+        match outcomes[0] {
+            None => {
+                log!(
+                    "connect {ip} -> skipped (reported < {}s ago)",
+                    dedupe.as_secs()
+                );
+                self.record(t, ip, Outcome::Dedup);
+            }
+            Some(primary) => {
+                match primary.quota() {
+                    Some(q) => log!("connect {ip} -> {} (quota left: {q})", primary.action()),
+                    None => log!("connect {ip} -> {}", primary.action()),
+                }
+                self.record(t, ip, primary);
+            }
         }
-        if primary.settled() {
-            self.mark_seen(ip);
-        }
-        self.record(t, ip, primary);
     }
 
     fn record(&mut self, t: u64, ip: IpAddr, outcome: Outcome) {
@@ -102,15 +156,6 @@ impl Worker {
         }
         if let Some(log) = self.events.as_mut() {
             log.close(t, ip, secs, bytes);
-        }
-    }
-
-    fn mark_seen(&mut self, ip: IpAddr) {
-        self.seen.insert(network(ip), Instant::now());
-        if self.seen.len() > 5000 && self.last_prune.elapsed() >= Duration::from_secs(60) {
-            self.last_prune = Instant::now();
-            let keep = self.dedupe;
-            self.seen.retain(|_, s| s.elapsed() < keep);
         }
     }
 }

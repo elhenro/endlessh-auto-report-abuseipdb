@@ -27,14 +27,25 @@ services:
       - no-new-privileges:true
     pids_limit: 128
     mem_limit: 128m
-    # one fd per stuck client; a daemon's soft default can be 1024, below TARPIT_MAX_CLIENTS
     ulimits:
+      # one fd per stuck client; a daemon's soft default can be 1024, below TARPIT_MAX_CLIENTS
       nofile: 8192
+      # a core file would hold the key
+      core: 0
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  default:
+    # without ipv6 on this network docker's proxy answers v6 clients itself and the tarpit only ever
+    # sees the gateway's address: no limit per source and no reports for anyone on ipv6
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd7c:4a2b:91e3::/64
 
 volumes:
   reported:

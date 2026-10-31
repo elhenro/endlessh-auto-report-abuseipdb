@@ -74,6 +74,7 @@ pub fn accept(t: u64, ip: &str) -> Event {
         t,
         ip: ip.parse().unwrap(),
         port: 40000,
+        ssh: true,
     }
 }
 

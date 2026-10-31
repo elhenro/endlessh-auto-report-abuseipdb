@@ -1,7 +1,7 @@
 //! generic sink: POST one json object per fresh visitor to any url
 //!   {"event":"accept","t":1760000000,"ip":"1.2.3.4","port":51234}
 
-use crate::sinks::{Backoff, Outcome, Sink, Visit};
+use crate::sinks::{is_success, Backoff, Outcome, Sink, Visit};
 use std::time::Duration;
 use ureq::{Agent, AgentBuilder, Error};
 
@@ -60,8 +60,7 @@ impl Sink for Webhook {
         }
         // log status codes only: the url itself may carry a secret
         match req.send_string(&body(v)) {
-            // redirects are off, so a 3xx arrives here too: nothing was delivered
-            Ok(r) if r.status() < 300 => Outcome::Delivered,
+            Ok(r) if is_success(r.status()) => Outcome::Delivered,
             Ok(r) => self.fail(&format!("answered HTTP {}", r.status())),
             Err(Error::Status(c, _)) => self.fail(&format!("answered HTTP {c}")),
             Err(e) => self.fail(&format!("unreachable ({})", e.kind())),

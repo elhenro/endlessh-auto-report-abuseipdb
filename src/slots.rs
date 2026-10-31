@@ -1,6 +1,6 @@
-//! how many connections the tarpit holds, overall and per network
+//! how many connections the tarpit holds: overall, per network and per site
 
-use crate::ip::{is_reserved, network};
+use crate::ip::{is_reserved, network, site};
 use std::{
     collections::{hash_map::Entry, HashMap},
     net::IpAddr,
@@ -13,11 +13,29 @@ struct State {
     max: usize,
     per_network: usize,
     total: usize,
+    reserved: usize,
     networks: HashMap<IpAddr, usize>,
+    sites: HashMap<IpAddr, usize>,
 }
 
 /// room left for the worker's api sockets and event files when clients ran the process out of fds
 const FD_HEADROOM: usize = 16;
+
+/// a site holds this many networks' worth of clients at most: a routed block must not take every slot
+const NETWORKS_PER_SITE: usize = 8;
+
+fn held(counts: &HashMap<IpAddr, usize>, key: IpAddr) -> usize {
+    counts.get(&key).copied().unwrap_or(0)
+}
+
+fn forget(counts: &mut HashMap<IpAddr, usize>, key: IpAddr) {
+    if let Entry::Occupied(mut n) = counts.entry(key) {
+        *n.get_mut() -= 1;
+        if *n.get() == 0 {
+            n.remove();
+        }
+    }
+}
 
 impl Slots {
     pub fn new(max: usize, per_network: usize) -> Self {
@@ -25,7 +43,9 @@ impl Slots {
             max,
             per_network,
             total: 0,
+            reserved: 0,
             networks: HashMap::new(),
+            sites: HashMap::new(),
         }))
     }
 
@@ -34,16 +54,25 @@ impl Slots {
         s.total >= s.max
     }
 
-    /// false: this network holds its share already, so one host cannot starve everyone else.
-    /// private addresses are exempt: behind a docker proxy every visitor looks like one gateway ip
+    /// false: this source holds its share already, so one host cannot starve everyone else
     pub fn acquire(&self, ip: IpAddr) -> bool {
         let s = &mut *self.0.lock().expect("slots lock");
-        if !is_reserved(ip) {
-            let held = s.networks.entry(network(ip)).or_default();
-            if *held >= s.per_network {
+        if is_reserved(ip) {
+            // behind a docker proxy every visitor looks like one gateway ip, so no share per address.
+            // half the slots stay out of reach: nobody can tell these apart or report them
+            if s.reserved >= (s.max / 2).max(1) {
                 return false;
             }
-            *held += 1;
+            s.reserved += 1;
+        } else {
+            let (net, block) = (network(ip), site(ip));
+            if held(&s.networks, net) >= s.per_network
+                || held(&s.sites, block) >= s.per_network.saturating_mul(NETWORKS_PER_SITE)
+            {
+                return false;
+            }
+            *s.networks.entry(net).or_default() += 1;
+            *s.sites.entry(block).or_default() += 1;
         }
         s.total += 1;
         true
@@ -52,11 +81,11 @@ impl Slots {
     pub fn release(&self, ip: IpAddr) {
         let s = &mut *self.0.lock().expect("slots lock");
         s.total -= 1;
-        if let Entry::Occupied(mut held) = s.networks.entry(network(ip)) {
-            *held.get_mut() -= 1;
-            if *held.get() == 0 {
-                held.remove();
-            }
+        if is_reserved(ip) {
+            s.reserved -= 1;
+        } else {
+            forget(&mut s.networks, network(ip));
+            forget(&mut s.sites, site(ip));
         }
     }
 
@@ -95,15 +124,46 @@ mod tests {
     }
 
     #[test]
-    fn private_addresses_have_no_share() {
+    fn a_routed_block_cannot_take_every_slot() {
+        let s = Slots::new(10_000, 2);
+        let v6: Vec<_> = (0..16)
+            .map(|n| ip(&format!("2a00:1450:0:{:x}::1", n / 2)))
+            .collect();
+        assert!(
+            v6.iter().all(|&a| s.acquire(a)),
+            "8 /64s of one /48, 2 each"
+        );
+        assert!(!s.acquire(ip("2a00:1450:0:ff::1")), "a fresh /64, same /48");
+        assert!(s.acquire(ip("2a00:1450:1::1")), "the next /48");
+
+        let v4: Vec<_> = (0..16).map(|n| ip(&format!("8.8.8.{}", n / 2))).collect();
+        assert!(v4.iter().all(|&a| s.acquire(a)));
+        assert!(!s.acquire(ip("8.8.8.200")), "a fresh address, same /24");
+        assert!(s.acquire(ip("8.8.9.1")), "the next /24");
+
+        s.release(v4[0]);
+        assert!(
+            s.acquire(ip("8.8.8.200")),
+            "a freed slot counts for the site too"
+        );
+    }
+
+    #[test]
+    fn private_addresses_have_no_share_but_cannot_take_everything() {
         let s = Slots::new(100, 1);
         for _ in 0..50 {
-            assert!(s.acquire(ip("172.17.0.1")));
+            assert!(s.acquire(ip("172.17.0.1")), "not limited per address");
         }
+        assert!(!s.acquire(ip("172.17.0.1")), "half of all slots");
+        assert!(!s.acquire(ip("fd00::1")), "any reserved source");
+        assert!(s.acquire(ip("8.8.8.8")), "public visitors still get in");
+        s.release(ip("8.8.8.8"));
         for _ in 0..50 {
             s.release(ip("172.17.0.1"));
         }
         assert!(!s.full());
+        assert!(s.acquire(ip("172.17.0.1")));
+        assert!(Slots::new(1, 1).acquire(ip("127.0.0.1")), "a tiny cap");
     }
 
     #[test]
@@ -114,7 +174,11 @@ mod tests {
         s.release(ip("8.8.8.8"));
         s.release(ip("1.1.1.1"));
         assert!(!s.full());
-        assert!(s.0.lock().unwrap().networks.is_empty(), "no entry leaks");
+        let state = s.0.lock().unwrap();
+        assert!(
+            state.networks.is_empty() && state.sites.is_empty(),
+            "no entry leaks"
+        );
     }
 
     #[test]

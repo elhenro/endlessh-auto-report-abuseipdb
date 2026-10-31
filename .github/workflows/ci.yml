@@ -17,13 +17,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: rustfmt, clippy, tests
         run: |
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
       - name: shellcheck
-        run: shellcheck -x install.sh systemd/install.sh
+        run: shellcheck -x install.sh systemd/install.sh docker/static-pie-cc
       - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: Dockerfile
@@ -34,7 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: known vulnerabilities in Cargo.lock
         run: |
-          cargo install cargo-audit --locked
+          cargo install cargo-audit --locked --version 0.22.2
           cargo audit

@@ -1,6 +1,6 @@
 //! AbuseIPDB v2 client: https://docs.abuseipdb.com/#report-endpoint
 
-use crate::sinks::{Backoff, Outcome, Sink, Visit};
+use crate::sinks::{is_success, Backoff, Outcome, Sink, Visit};
 use std::{io::Read, time::Duration};
 use ureq::{Agent, AgentBuilder, Error, Request, Response};
 
@@ -41,7 +41,7 @@ impl AbuseIpdb {
             .get(&format!("{}/check", self.base))
             .query("ipAddress", "127.0.0.1");
         match self.authed(req).call() {
-            Ok(r) if r.status() < 300 => log!("AbuseIPDB token ok"),
+            Ok(r) if is_success(r.status()) => log!("AbuseIPDB token ok"),
             Ok(r) => log!(
                 "warning: token check returned HTTP {}, continuing",
                 r.status()
@@ -103,8 +103,7 @@ impl Sink for AbuseIpdb {
             ("comment", comment.as_str()),
         ]);
         match res {
-            // redirects are off, so a 3xx arrives here too: nothing was reported
-            Ok(resp) if resp.status() < 300 => Outcome::Reported(
+            Ok(resp) if is_success(resp.status()) => Outcome::Reported(
                 resp.header("x-ratelimit-remaining")
                     .and_then(|h| h.trim().parse().ok()),
             ),
