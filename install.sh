@@ -64,23 +64,30 @@ choose_port() { # default
 }
 
 own_service_running() {
-  if [ "$MODE" = systemd ]; then systemctl is-active --quiet endlessh-reporter 2>/dev/null
+  if [ "$MODE" = systemd ]; then systemctl is-active --quiet endlessh-reporter.socket endlessh-reporter 2>/dev/null
   else [ -n "$(docker compose ps -q 2>/dev/null)" ]; fi
 }
 
-# connect once, then look for the reporter's "connect" log line
+# connect, then look for the reporter's "connect" log line. retries, because docker's proxy
+# accepts on the published port while the binary is still checking the token and not listening yet
 self_test() { # log command...
   say "testing the tarpit on port $PORT ..."
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    (exec 3<>/dev/tcp/127.0.0.1/"$PORT") 2>/dev/null && break
+    (exec 3<>/dev/tcp/127.0.0.1/"$PORT") 2>/dev/null
     sleep 1
+    if "$@" 2>&1 | grep -q 'tarpit: connect '; then
+      say "OK: the tarpit accepted a test connection and the reporter saw it."
+      return
+    fi
   done
-  sleep 1
-  if "$@" 2>&1 | grep -q 'tarpit: connect '; then
-    say "OK: the tarpit accepted a test connection and the reporter saw it."
-  else
-    say "WARNING: no connection showed up in the logs. check: $*"
-  fi
+  say "WARNING: no connection showed up in the logs. check: $*"
+}
+
+# the container's uid must read the key: the file is 0644, the 0700 directory keeps other host users out
+write_token() {
+  ( umask 077; mkdir -p secrets )
+  chmod 700 secrets
+  ( umask 022; printf '%s' "${API_TOKEN:-}" > secrets/api_token )
 }
 
 write_env() {
@@ -88,13 +95,18 @@ write_env() {
     say "keeping existing .env (delete it to reconfigure)"
     PORT=$(sed -n 's/^HOST_PORT=//p' .env | tail -1)
     PORT=${PORT:-22}
+    if grep -q '^API_TOKEN=.' .env; then
+      say "warning: API_TOKEN in .env shows up in docker inspect, move it to secrets/api_token"
+    fi
+    [ -f secrets/api_token ] || API_TOKEN="" write_token
     return
   fi
   choose_port 22
   [ "$DRY" = 1 ] || get_token
   ask "your own public ips to never report (comma separated, optional)" ""
   ( umask 077
-    printf 'API_TOKEN=%s\nHOST_PORT=%s\nDRY_RUN=%s\nALLOWLIST=%s\n' "${API_TOKEN:-}" "$PORT" "$DRY" "$REPLY" > .env )
+    printf 'HOST_PORT=%s\nDRY_RUN=%s\nALLOWLIST=%s\n' "$PORT" "$DRY" "$REPLY" > .env )
+  write_token
 }
 
 install_docker() {
@@ -117,7 +129,15 @@ next_steps() {
     say "tarpit is running on :$PORT. bots mostly hit :22, so to go live:"
     say "  1. set 'Port <n>' in sshd_config (n in 1024-65535), run 'sshd -t', open <n> in your firewall/cloud security group"
     say "  2. reload sshd and confirm 'ssh -p <n> host' works from a second terminal BEFORE closing this one"
-    say "  3. re-run with HOST_PORT=22 (delete .env first, or edit HOST_PORT in it)"
+    if [ "$MODE" = systemd ]; then
+      say "  3. set TARPIT_PORT=22 in /etc/endlessh-reporter/env and re-run this installer"
+    else
+      say "  3. set HOST_PORT=22 in .env and run 'docker compose up -d'"
+    fi
+    if [ "$DRY" = 0 ]; then
+      say "warning: any web page can make its visitors' browsers connect to :$PORT (they only refuse 22),"
+      say "and those visitors would get reported. set DRY_RUN=1 until the tarpit is on 22 if that matters to you."
+    fi
   fi
 }
 

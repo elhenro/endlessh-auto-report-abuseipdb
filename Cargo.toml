@@ -1,0 +1,23 @@
+[package]
+name = "endlessh-reporter"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "SSH tarpit that optionally reports visitors to AbuseIPDB and other APIs"
+license = "MIT"
+publish = false
+
+[dependencies]
+socket2 = "0.5"
+# already in the tree through ureq: url checks must parse exactly the way the connection will
+url = "2"
+# rustls + bundled roots, no openssl and no system ca store needed
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+# a panicking thread must take the process down so systemd restarts it
+panic = "abort"

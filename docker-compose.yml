@@ -8,6 +8,14 @@ services:
     ports:
       - "${HOST_PORT:-22}:2222"
     env_file: .env
+    environment:
+      # docker inspect shows the environment, so the key comes in as a file
+      API_TOKEN_FILE: /run/secrets/api_token
+      # the container always listens on 2222; this is the port the world sees
+      HOST_PORT: ${HOST_PORT:-22}
+    # a webhook secret works the same way: add webhook_auth here and below, set WEBHOOK_AUTH_FILE
+    secrets:
+      - api_token
     volumes:
       - reported:/data
     read_only: true
@@ -19,6 +27,9 @@ services:
       - no-new-privileges:true
     pids_limit: 128
     mem_limit: 128m
+    # one fd per stuck client; a daemon's soft default can be 1024, below TARPIT_MAX_CLIENTS
+    ulimits:
+      nofile: 8192
     logging:
       driver: json-file
       options:
@@ -27,3 +38,8 @@ services:
 
 volumes:
   reported:
+
+secrets:
+  api_token:
+    # 0644 inside a 0700 directory: the container's uid can read it, other host users cannot
+    file: ./secrets/api_token

@@ -1,25 +1,33 @@
 [Unit]
-Description=SSH tarpit (endlessh) with AbuseIPDB reporting
+Description=SSH tarpit with optional AbuseIPDB reporting
 Documentation=https://github.com/elhenro/endlessh-auto-report-abuseipdb
-After=network-online.target
+Requires=endlessh-reporter.socket
+After=network-online.target endlessh-reporter.socket
 Wants=network-online.target
 
 [Service]
-ExecStart=/opt/endlessh-reporter/tarpitReporter.sh
+ExecStart=/opt/endlessh-reporter/endlessh-reporter
 EnvironmentFile=/etc/endlessh-reporter/env
-Environment=REPORTED_FILE=/var/lib/endlessh-reporter/reportedIps.txt
+Environment=EVENTS_DIR=/var/lib/endlessh-reporter/events
 # token is handed over as a credential file, never an env var or argv
 LoadCredential=api_token:/etc/endlessh-reporter/api_token
+# optional webhook secret (full Authorization header value), same mechanism:
+#LoadCredential=webhook_auth:/etc/endlessh-reporter/webhook_auth
 StateDirectory=endlessh-reporter
+# one fd per stuck client; systemd's soft default of 1024 is below TARPIT_MAX_CLIENTS
+LimitNOFILE=8192
 Restart=on-failure
 RestartSec=5
 # config errors (bad token, bad settings) exit 78: do not loop on them
 RestartPreventExitStatus=78
+# SIGTERM ends the process with 143; that is a clean stop, not a failure
+SuccessExitStatus=143
 
-# unprivileged throwaway user that may still bind port 22
+# unprivileged throwaway user without any capabilities: endlessh-reporter.socket owns the port
 DynamicUser=yes
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=
+CapabilityBoundingSet=
+PrivateUsers=yes
 
 # sandbox
 NoNewPrivileges=yes
@@ -35,7 +43,17 @@ RestrictNamespaces=yes
 RestrictRealtime=yes
 LockPersonality=yes
 SystemCallArchitectures=native
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+ProtectProc=invisible
+ProcSubset=pid
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
 UMask=0077
 
 [Install]
 WantedBy=multi-user.target
+Also=endlessh-reporter.socket
