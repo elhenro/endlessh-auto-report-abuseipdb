@@ -130,7 +130,7 @@ Private, loopback and allowlisted addresses are never written. Files are `0644` 
 
 ## Security and privacy
 
-- Docker: distroless image without shell or package manager, runs as `nobody`, read-only rootfs, all capabilities dropped, memory and pid limits (about 4 MiB of RAM in practice).
+- Docker: fully static binary on a distroless image, so no libc, shell or package manager. Runs as `nobody`, read-only rootfs, all capabilities dropped, memory and pid limits (about 4 MiB of RAM in practice).
 - The tarpit never reads from a client, so nothing a client sends is ever parsed; the only thing taken from a connection is its address. The only network input parsed at all is the HTTPS response from AbuseIPDB or your webhook: status and headers, plus at most 200 bytes of an AbuseIPDB error body, logged with control characters blanked. The API key lives in memory and in one request header, never in argv or in a child process environment. API calls refuse redirects and plain http (except localhost).
 - No `unsafe` besides one `from_raw_fd` for systemd socket activation. A panic in any thread aborts the process so systemd restarts it.
 - Keep `.env` at `chmod 600` and `secrets/` at `chmod 700`. Report vulnerabilities per [SECURITY.md](SECURITY.md).

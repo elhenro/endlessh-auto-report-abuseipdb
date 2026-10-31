@@ -1,5 +1,5 @@
 # both bases are pinned by digest; dependabot proposes updates
-FROM rust:1.92-slim-bookworm@sha256:f1f73538ebe623fd3673a35aff3df358ae1084c64c55646516e5b17b321b6c9b AS build
+FROM rust:1.92-alpine@sha256:f6c22e0a256c05d44fca23bf530120b5d4a6249a393734884281ca80782329bc AS build
 # the final image has no shell to create the volume mount point with
 RUN mkdir /data
 WORKDIR /src
@@ -7,9 +7,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --locked
 
-# no shell, perl or package manager for an intruder to use; same bookworm glibc as the build.
+# no libc, shell, perl or package manager: the musl binary is fully static.
 # no ca certificates needed: the binary bundles its own roots
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=build --chown=65534:65534 /data /data
 COPY --from=build /src/target/release/endlessh-reporter /usr/local/bin/endlessh-reporter
