@@ -37,6 +37,8 @@ $EDITOR secrets/api_token
 
 Nothing has to change. A `.env` or `/etc/endlessh-reporter/env` from the old version keeps working as it is, on the same volume with the same audit file, and going back to the old image works too. Docker: `docker compose pull && docker compose up -d`, with or without a `git pull` first. Systemd: `git pull && sudo ./install.sh --systemd`, which takes the binary from the latest release if the host has no Rust toolchain.
 
+The dedupe carries over as well: the new binary reads the existing `reportedIps.txt` at startup, so an address the bash version reported within `DEDUPE_SECONDS` is not reported again, and the file keeps growing from where it was.
+
 Every old setting still works: `API_TOKEN`, `API_TOKEN_FILE`, `DRY_RUN`, `ALLOWLIST`, `HOST_PORT`, `TARPIT_*`, `DEDUPE_SECONDS`, `CATEGORIES`, `REPORTED_FILE`, `CURL_TIMEOUT` and `ENDLESSH_ARGS`. So do the installer's flags, the log lines above, exit codes, and `tarpitReporter.sh` as an entry point.
 
 What behaves differently, on purpose:
@@ -64,7 +66,7 @@ Without a `git pull` the old compose file also keeps `init: true`, and that init
 
 Bots hit port 22, so your real `sshd` has to live elsewhere. **A wrong move here locks you out of your server**, so the installer starts on 2222 whenever 22 is taken. Then:
 
-1. In `sshd_config` set `Port <n>` (1024-65535) and run `sshd -t`.
+1. In `sshd_config` set `Port <n>` (1024-65535) and run `sshd -t`. On a socket-activated sshd (Ubuntu 22.10 and later ship it enabled) `sshd_config` has no say: set `ListenStream=<n>` in the `ssh.socket` override instead, then `systemctl daemon-reload`. The installer reads sshd's port from the enabled unit either way.
 2. Open `<n>` in your firewall / cloud security group.
 3. Reload sshd. From a second terminal confirm `ssh -p <n> you@host` works. Only then close your first session.
 4. Docker: set `HOST_PORT=22` and `DRY_RUN=0` in `.env`, then `./install.sh`. Systemd: set `TARPIT_PORT=22` and `DRY_RUN=0` in `/etc/endlessh-reporter/env`, then `sudo ./install.sh --systemd`.
@@ -93,7 +95,7 @@ tarpit: 412 connections skipped, last 192.168.65.1 (private/reserved address)
 sudo ./install.sh --systemd
 ```
 
-Installs the binary to `/opt/endlessh-reporter` as a sandboxed service: dynamic unprivileged user, no capabilities at all (a `.socket` unit owns the port, so systemd binds :22 and hands the service the listener), read-only filesystem, syscall filter, token passed as a systemd credential. Config lives in `/etc/endlessh-reporter/env`; the port is set from `TARPIT_PORT` at install time, so re-run the installer to change it. The installer uses a binary you built (`cargo build --release --locked`, as your own user), builds it if `cargo` is on root's PATH, and otherwise offers the one from the latest release. A binary older than the source is ignored, so after `git pull` build again before re-running. Upgrading from the old bash version removes its program files and keeps its `reportedIps.txt`.
+Installs the binary to `/opt/endlessh-reporter` as a sandboxed service: dynamic unprivileged user, no capabilities at all (a `.socket` unit owns the port, so systemd binds :22 and hands the service the listener), read-only filesystem, syscall filter, token passed as a systemd credential. Config lives in `/etc/endlessh-reporter/env`; the port is set from `TARPIT_PORT` at install time, so re-run the installer to change it. The installer uses a binary you built (`cargo build --release --locked`, as your own user), builds it if `cargo` is on root's PATH, and otherwise offers the one from the latest release. A binary older than the source is ignored, so after `git pull` build again before re-running. Upgrading from the old bash version removes its program files and keeps its `reportedIps.txt`. What is left is one 1.7 MB binary and no interpreter: on a host with 27 days of event logs it sat at 3.9 MB resident and used 58 ms of CPU in its first nine minutes, where the bash version had burned 7 minutes of CPU and peaked at 23 MB over five hours.
 
 ## Configuration
 
