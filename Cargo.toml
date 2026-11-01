@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 # constants only (open flags), no calls into it. already in the tree through socket2
 libc = "0.2"
-socket2 = "0.5"
+socket2 = "0.6"
 # already in the tree through ureq: url checks must parse exactly the way the connection will
 url = "2"
 # rustls + bundled roots, no openssl and no system ca store needed
