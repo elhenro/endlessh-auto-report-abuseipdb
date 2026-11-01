@@ -104,6 +104,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # the binaries get a build attestation too: a checksum from the same release only proves the
+      # download survived the network, not who built it. `gh attestation verify <file> --repo ...`
+      id-token: write
+      attestations: write
     steps:
       - name: take the binaries out of the image
         env:
@@ -115,6 +119,9 @@ jobs:
             docker rm "$id"
           done
           sha256sum endlessh-reporter-* > SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: endlessh-reporter-*
       - name: attach them to a release
         env:
           GH_TOKEN: ${{ github.token }}

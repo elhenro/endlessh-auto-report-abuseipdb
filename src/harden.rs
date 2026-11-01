@@ -7,8 +7,14 @@
 pub fn no_inspection() {
     // SAFETY: sets a flag on this process, passes no pointers
     #[cfg(target_os = "linux")]
-    unsafe {
-        libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+    {
+        let rc = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
+        if rc != 0 {
+            // a seccomp profile or a missing privilege can refuse this. keep running - the tarpit is the
+            // point - but say the key is readable through /proc by anyone with our uid
+            let e = std::io::Error::last_os_error();
+            log!("warning: could not make the process non-dumpable, the api token may be readable: {e}");
+        }
     }
 }
 

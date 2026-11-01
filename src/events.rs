@@ -138,19 +138,79 @@ impl EventLog {
         self.prune(day);
     }
 
+    /// old days go first, then whole days from the old end while the directory is over the budget.
+    /// the budget is daily cap times retention, which is what the readme promises
     fn prune(&self, today: i64) {
         let Ok(entries) = fs::read_dir(&self.dir) else {
             return;
         };
+        let mut days: Vec<(i64, PathBuf, u64)> = Vec::new();
         for entry in entries.flatten() {
             let name = entry.file_name();
             let file_day = name
                 .to_str()
                 .and_then(|n| n.strip_prefix("events-")?.strip_suffix(".jsonl"))
                 .and_then(parse_date);
-            if file_day.is_some_and(|d| d < today - self.keep_days) {
+            let Some(day) = file_day else { continue };
+            if day < today - self.keep_days {
                 let _ = fs::remove_file(entry.path());
+                continue;
+            }
+            let len = entry.metadata().map_or(0, |m| m.len());
+            days.push((day, entry.path(), len));
+        }
+        let budget = self.max_bytes.saturating_mul(self.keep_days.max(0) as u64);
+        let mut total: u64 = days.iter().map(|d| d.2).sum();
+        days.sort_by_key(|d| d.0);
+        for (day, path, len) in days {
+            // never today's: it is open, and it is what the tarpit is writing
+            if total <= budget || day >= today {
+                break;
+            }
+            if fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(len);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("events-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn drops_whole_days_from_the_old_end_past_the_budget() {
+        let d = dir("budget");
+        let today = 20_700; // 2026-09-03, any day works
+        for day in [today - 2, today - 1, today] {
+            let path = d.join(format!("events-{}.jsonl", date_string(day)));
+            fs::write(&path, vec![b'x'; 1000]).unwrap();
+        }
+        // two days of room: 3 files of 1000 bytes do not fit
+        let log = EventLog::open(d.clone(), 2, 1_200).unwrap();
+        log.prune(today);
+        let left: Vec<i64> = fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| {
+                let n = e.file_name();
+                let n = n
+                    .to_str()?
+                    .strip_prefix("events-")?
+                    .strip_suffix(".jsonl")?;
+                parse_date(n)
+            })
+            .collect();
+        assert_eq!(left.len(), 2, "only the budget, from the old end");
+        assert!(!left.contains(&(today - 2)), "the oldest day went first");
+        assert!(left.contains(&today), "today is never pruned");
+        let _ = fs::remove_dir_all(&d);
     }
 }

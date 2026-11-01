@@ -78,12 +78,13 @@ ssh -p 22 localhost            # hangs forever, never gets a banner: that is the
 docker compose logs -f         # or: journalctl -fu endlessh-reporter
 ```
 
-Every visitor gets one log line:
+Every visitor gets one log line, and a flood cannot bury them: a report always logs its own line, while connections that are skipped for the same reason are logged once and then at most once a minute with a count, since a port scan would otherwise fill the log with them.
 
 ```
 tarpit: connect 203.0.113.9 -> reported (quota left: 987)
 tarpit: connect 203.0.113.9 -> skipped (reported < 900s ago)
 tarpit: connect 192.168.65.1 -> skipped (private/reserved address)
+tarpit: 412 connections skipped, last 192.168.65.1 (private/reserved address)
 ```
 
 ## Bare metal (systemd)
@@ -120,8 +121,8 @@ Environment variables (`.env` for docker, `/etc/endlessh-reporter/env` for syste
 | `HTTP_TIMEOUT` | `10` | seconds before an API call is abandoned, 1-120. The old name `CURL_TIMEOUT` still works, with anything above 120 (or 0, no limit) taken as 120 |
 | `REPORTED_FILE` | image: `/data/reportedIps.txt`; systemd: `/var/lib/endlessh-reporter/reportedIps.txt` | audit file of what AbuseIPDB accepted, one `<time> <ip>` per line. Empty disables. Grows until you trim it, and a symlink is refused |
 | `EVENTS_DIR` | | write a [JSONL event log](#event-log) here, empty disables (systemd default: `/var/lib/endlessh-reporter/events`) |
-| `EVENTS_RETENTION_DAYS` | `30` | delete event files older than this |
-| `EVENTS_MAX_DAILY_MB` | `100` | stop writing events for the rest of the UTC day past this size, so disk use stays below this times the retention |
+| `EVENTS_RETENTION_DAYS` | `30` | delete event files older than this; whole days also go from the old end when the directory is over the budget below |
+| `EVENTS_MAX_DAILY_MB` | `100` | stop writing events for the rest of the UTC day past this size. With the retention it is the disk budget: 100 MB × 30 days by default, and old days are deleted to stay under it. Today's file is never deleted |
 
 ## What gets reported
 

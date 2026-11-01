@@ -15,13 +15,28 @@ download_binary() {
   dir=$(mktemp -d)
   if curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 -o "$dir/$name" "$url/$name" &&
     curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 -o "$dir/SHA256SUMS" "$url/SHA256SUMS" &&
-    ( cd "$dir" && grep " $name\$" SHA256SUMS | sha256sum -c --quiet - ); then
+    ( cd "$dir" && grep " $name\$" SHA256SUMS | sha256sum -c --quiet - ) &&
+    verify_attestation "$dir/$name"; then
     chmod 755 "$dir/$name"
     BIN=$dir/$name BIN_TMP=$dir
     return 0
   fi
   rm -rf "$dir"
   return 1
+}
+
+# the checksum comes from the same release, so on its own it only proves the download survived the
+# network. the attestation proves the repository's release job built it; gh asks github for it
+verify_attestation() {
+  local file=$1
+  if ! command -v gh >/dev/null; then
+    say "gh is not installed: $file matches the checksum, but the build attestation stays unchecked"
+    return 0
+  fi
+  if ! gh attestation verify "$file" --repo elhenro/endlessh-auto-report-abuseipdb >/dev/null 2>&1; then
+    say "the release attestation of $(basename "$file") does not verify: not installing it"
+    return 1
+  fi
 }
 
 # a prebuilt binary next to install.sh, else the cargo build output, else build now, else the release
