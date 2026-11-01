@@ -14,11 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// bytes the kernel holds unread on the tarpit's side of the connection `port` <- `client`
-///
-/// both ports are matched, and leftover TIME_WAIT rows are skipped: the tables are per network
-/// namespace, not per process, so an earlier connection whose client happened to get the same
-/// ephemeral port would otherwise answer with an empty queue.
+/// bytes the kernel holds unread on the tarpit's side of `port` <- `client`; both ports and no
+/// TIME_WAIT, since the table is per network namespace and an older connection may reuse `client`
 #[cfg(target_os = "linux")]
 fn unread(pid: u32, port: u16, client: u16) -> Option<usize> {
     let (local, remote) = (format!(":{port:04X}"), format!(":{client:04X}"));
