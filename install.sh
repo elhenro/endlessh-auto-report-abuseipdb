@@ -64,6 +64,12 @@ self_test() { # log command...
   say "WARNING: no connection showed up in the logs. check: $*"
 }
 
+# a kernel booted with ipv6 off cannot create that network
+compose_files() {
+  printf 'docker-compose.yml:docker-compose.secrets.yml'
+  [ ! -d /proc/sys/net/ipv6 ] || printf ':docker-compose.ipv6.yml'
+}
+
 # the container's uid must read the key: the file is 0644, the 0700 directory keeps other host users out
 write_token() {
   ( umask 077; mkdir -p secrets )
@@ -74,14 +80,17 @@ write_token() {
 write_env() {
   if [ -f .env ]; then
     say "keeping existing .env (delete it to reconfigure)"
-    PORT=$(sed -n 's/^HOST_PORT=//p' .env | tail -1)
+    PORT=$(sed -n 's/^HOST_PORT=//p' .env | tail -1 | tr -d "\"'")
     PORT=${PORT:-22}
-    DRY=$(sed -n 's/^DRY_RUN=//p' .env | tail -1)
+    DRY=$(sed -n 's/^DRY_RUN=//p' .env | tail -1 | tr -d "\"'")
     DRY=${DRY:-0}
     if grep -q '^API_TOKEN=.' .env; then
-      say "warning: API_TOKEN in .env shows up in docker inspect, move it to secrets/api_token"
+      say "note: API_TOKEN in .env keeps working but shows up in docker inspect, see 'Upgrading from the bash version' in the readme"
     fi
-    [ -f secrets/api_token ] || API_TOKEN="" write_token
+    # only a .env that turned on the secrets file needs it to exist
+    if grep -q '^COMPOSE_FILE=.*secrets' .env && [ ! -f secrets/api_token ]; then
+      API_TOKEN="" write_token
+    fi
     return
   fi
   choose_port 22
@@ -89,7 +98,7 @@ write_env() {
   hold_reports
   ask "your own public ips to never report (comma separated, optional)" ""
   ( umask 077
-    printf 'HOST_PORT=%s\nDRY_RUN=%s\nALLOWLIST=%s\n' "$PORT" "$DRY" "$REPLY" > .env )
+    printf 'COMPOSE_FILE=%s\nHOST_PORT=%s\nDRY_RUN=%s\nALLOWLIST=%s\n' "$(compose_files)" "$PORT" "$DRY" "$REPLY" > .env )
   write_token
 }
 

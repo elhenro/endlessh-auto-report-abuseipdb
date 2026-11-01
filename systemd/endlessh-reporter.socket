@@ -1,6 +1,9 @@
 [Unit]
 Description=Port of the SSH tarpit, held by systemd so the service needs no capabilities
 Documentation=https://github.com/elhenro/endlessh-auto-report-abuseipdb
+# stopping the service has to free the port, as it did before this unit existed: anything
+# left listening starts the service again on the next visitor
+PartOf=endlessh-reporter.service
 
 [Socket]
 # install.sh sets this from TARPIT_PORT

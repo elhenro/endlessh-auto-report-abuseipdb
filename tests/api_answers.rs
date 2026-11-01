@@ -143,7 +143,7 @@ impl Sink for Flaky {
 
     fn send(&mut self, _: &Visit) -> Outcome {
         match self.0.fetch_add(1, Ordering::SeqCst) {
-            0 => Outcome::Failed,
+            0 => Outcome::Failed(500),
             _ => Outcome::Delivered,
         }
     }

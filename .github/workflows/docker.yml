@@ -1,8 +1,8 @@
 name: docker
 
-# master -> :edge and :latest, tag vX.Y.Z -> :X.Y.Z / :X.Y. the base images are pinned by digest, so a
-# fix reaches users when its dependabot bump is merged, and that has to reach :latest, which compose pulls.
-# the weekly run scans the same image against a fresh vulnerability database
+# master -> :edge, tag vX.Y.Z -> :X.Y.Z / :X.Y / :latest and a release with the binaries. :latest is what
+# compose pulls, so only a tag moves it. the base images are pinned by digest, so a fix reaches users when
+# its dependabot bump is merged and tagged. the weekly run scans the same image against a fresh vulnerability database
 # actions are pinned to commit SHAs; dependabot bumps them and the version comments
 on:
   push:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   # read-only token: nothing here can publish, and no build cache leads from here to publish.
-  # this job is the gate of :latest, so it runs everything that has to hold: tests, known
+  # this job is the gate of every image, so it runs everything that has to hold: tests, known
   # vulnerabilities in the crates, and the scan of the image, which sees the crates through cargo-auditable
   scan:
     runs-on: ubuntu-latest
@@ -52,6 +52,8 @@ jobs:
     needs: scan
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -77,7 +79,7 @@ jobs:
             type=edge,branch=master
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
       # built from scratch every time: a shared cache could hand this job layers nobody here built
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -94,3 +96,26 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  # for systemd hosts without a rust toolchain: the binaries out of the image just published, nothing built here
+  release:
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: take the binaries out of the image
+        env:
+          REF: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+        run: |
+          for pair in amd64:x86_64 arm64:aarch64; do
+            id=$(docker create --platform "linux/${pair%:*}" "$REF")
+            docker cp "$id:/usr/local/bin/endlessh-reporter" "endlessh-reporter-${pair#*:}"
+            docker rm "$id"
+          done
+          sha256sum endlessh-reporter-* > SHA256SUMS
+      - name: attach them to a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes endlessh-reporter-* SHA256SUMS

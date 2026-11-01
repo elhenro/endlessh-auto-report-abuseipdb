@@ -57,7 +57,7 @@ impl AbuseIpdb {
 
     fn pause(&mut self, secs: u64, why: &str) {
         self.backoff.set(secs);
-        log!("pausing AbuseIPDB reports for {}s: {why}", secs.min(86_400));
+        log!("pausing reports for {}s: {why}", secs.min(86_400));
     }
 }
 
@@ -88,8 +88,8 @@ impl Sink for AbuseIpdb {
     }
 
     fn send(&mut self, v: &Visit) -> Outcome {
-        if self.backoff.remaining().is_some() {
-            return Outcome::Paused;
+        if let Some(left) = self.backoff.remaining() {
+            return Outcome::Paused(left);
         }
         let ip = v.ip.to_string();
         let comment = format!(
@@ -108,8 +108,8 @@ impl Sink for AbuseIpdb {
                     .and_then(|h| h.trim().parse().ok()),
             ),
             Ok(resp) => {
-                self.pause(30, &format!("api answered HTTP {}", resp.status()));
-                Outcome::Failed
+                self.pause(30, "api unavailable");
+                Outcome::Failed(resp.status())
             }
             Err(Error::Status(422, resp)) => {
                 log!("connect {ip} -> rejected by AbuseIPDB: {}", snippet(resp));
@@ -124,19 +124,19 @@ impl Sink for AbuseIpdb {
                     return Outcome::Dedup;
                 }
                 self.pause(secs, "daily quota exhausted");
-                Outcome::Failed
+                Outcome::Failed(429)
             }
             Err(Error::Status(c @ (401 | 403), _)) => {
                 self.pause(3600, &format!("token rejected (HTTP {c})"));
-                Outcome::Failed
+                Outcome::Failed(c)
             }
             Err(Error::Status(c, _)) => {
-                self.pause(30, &format!("api answered HTTP {c}"));
-                Outcome::Failed
+                self.pause(30, "api unavailable");
+                Outcome::Failed(c)
             }
             Err(_) => {
-                self.pause(30, "api unreachable");
-                Outcome::Failed
+                self.pause(30, "api unavailable");
+                Outcome::Failed(0)
             }
         }
     }

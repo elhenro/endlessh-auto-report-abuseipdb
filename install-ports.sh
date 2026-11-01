@@ -11,7 +11,7 @@ port_busy() {
 own_port() {
   if [ "$MODE" = systemd ]; then
     systemctl is-active --quiet endlessh-reporter.socket 2>/dev/null &&
-      grep -qx "ListenStream=$1" "$SOCKET" 2>/dev/null
+      grep -qxE "ListenStream=(.*:)?$1" "$SOCKET" 2>/dev/null
   else
     docker compose port endlessh 2222 2>/dev/null | grep -q ":$1\$"
   fi
@@ -57,6 +57,7 @@ require_port() {
 
 # browsers refuse 22 but not other ports, so reports wait until the operator moves the tarpit there on purpose
 hold_reports() {
+  [ "${DRY_RUN:-}" != 0 ] || return 0 # asked for by name
   if [ "${PORT##*:}" != 22 ] && [ "$DRY" = 0 ]; then
     DRY=1
     say "port $PORT is not 22, so starting with DRY_RUN=1: visitors are logged, nothing gets reported yet."

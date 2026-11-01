@@ -27,10 +27,10 @@ impl Webhook {
         }
     }
 
-    fn fail(&mut self, why: &str) -> Outcome {
+    fn fail(&mut self, code: u16, why: &str) -> Outcome {
         log!("webhook {why}, pausing 30s");
         self.backoff.set(30);
-        Outcome::Failed
+        Outcome::Failed(code)
     }
 }
 
@@ -48,8 +48,8 @@ impl Sink for Webhook {
     }
 
     fn send(&mut self, v: &Visit) -> Outcome {
-        if self.backoff.remaining().is_some() {
-            return Outcome::Paused;
+        if let Some(left) = self.backoff.remaining() {
+            return Outcome::Paused(left);
         }
         let mut req = self
             .agent
@@ -61,9 +61,9 @@ impl Sink for Webhook {
         // log status codes only: the url itself may carry a secret
         match req.send_string(&body(v)) {
             Ok(r) if is_success(r.status()) => Outcome::Delivered,
-            Ok(r) => self.fail(&format!("answered HTTP {}", r.status())),
-            Err(Error::Status(c, _)) => self.fail(&format!("answered HTTP {c}")),
-            Err(e) => self.fail(&format!("unreachable ({})", e.kind())),
+            Ok(r) => self.fail(r.status(), &format!("answered HTTP {}", r.status())),
+            Err(Error::Status(c, _)) => self.fail(c, &format!("answered HTTP {c}")),
+            Err(e) => self.fail(0, &format!("unreachable ({})", e.kind())),
         }
     }
 }

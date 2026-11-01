@@ -1,6 +1,6 @@
 use endlessh_reporter::{
-    abuseipdb::AbuseIpdb, config::Config, events::EventLog, listen, log, sinks::Sink, tarpit,
-    tarpit::Params, webhook::Webhook, worker::Worker,
+    abuseipdb::AbuseIpdb, config::Config, events::EventLog, harden, listen, log,
+    reported::ReportedFile, sinks::Sink, tarpit, tarpit::Params, webhook::Webhook, worker::Worker,
 };
 use std::{env, io::Write, process::exit, sync::mpsc, thread};
 
@@ -41,6 +41,8 @@ fn build_sinks(cfg: &Config) -> Result<Vec<Box<dyn Sink>>, String> {
 }
 
 fn main() {
+    harden::no_inspection();
+    harden::exit_on_signals();
     let cfg = Config::from_env().unwrap_or_else(|e| fail(78, &e));
     if env::args().nth(1).as_deref() == Some("--healthcheck") {
         exit(i32::from(!listen::is_listening(cfg.port)));
@@ -64,7 +66,7 @@ fn main() {
         }
     });
 
-    let listener = listen::listen(cfg.port)
+    let listener = listen::listen(cfg.port, cfg.family)
         .unwrap_or_else(|e| fail(1, &format!("cannot listen on port {}: {e}", cfg.port)));
     // full address, so a v4-only fallback shows as 0.0.0.0 instead of [::]
     let addr = listener.local_addr().ok();
@@ -77,6 +79,19 @@ fn main() {
              their users reported. set DRY_RUN=1 until the tarpit is on 22"
         );
     }
+    // under systemd the socket unit decides. the old version moved here on a restart, this one cannot
+    if env::var_os("TARPIT_PORT").is_some() && bound_port.is_some_and(|p| p != cfg.port) {
+        log!(
+            "warning: TARPIT_PORT={} is not in effect, the socket passed in is on {bound}: re-run the installer to move it",
+            cfg.port
+        );
+    }
+    if cfg.report_all && !names.is_empty() {
+        log!(
+            "warning: REPORT_ALL_CONNECTIONS=1: anything that makes a machine connect here, such as a web page \
+             or a url fetcher, gets whoever runs it reported"
+        );
+    }
     log!(
         "starting tarpit on {bound} (sinks: [{}], dedupe={}s)",
         names.join(","),
@@ -84,7 +99,9 @@ fn main() {
     );
 
     let (tx, rx) = mpsc::sync_channel(4096);
-    let worker = Worker::new(cfg.allowlist, cfg.dedupe, sinks, events);
+    let worker = Worker::new(cfg.allowlist, cfg.dedupe, sinks, events)
+        .report_all(cfg.report_all)
+        .reported_to(cfg.reported_file.map(ReportedFile::new));
     thread::Builder::new()
         .name("worker".into())
         .spawn(move || worker.run(rx))

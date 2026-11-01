@@ -19,8 +19,10 @@ pub enum Outcome {
     Rejected,
     /// reported recently, by us or by another host on the same key
     Dedup,
-    Paused,
-    Failed,
+    /// seconds left
+    Paused(u64),
+    /// the http status, 0 for no answer
+    Failed(u16),
     /// no sink configured
     Dry,
     /// never said it speaks ssh: nothing to report
@@ -40,10 +42,24 @@ impl Outcome {
             Outcome::Delivered => "delivered",
             Outcome::Rejected => "rejected",
             Outcome::Dedup => "dedup",
-            Outcome::Paused => "paused",
-            Outcome::Failed => "failed",
+            Outcome::Paused(_) => "paused",
+            Outcome::Failed(_) => "failed",
             Outcome::Dry => "dry",
-            Outcome::NotSsh => "not_ssh",
+            Outcome::NotSsh => "notssh",
+        }
+    }
+
+    /// what the log says after "connect <ip> -> ". the old reporter's wording: log filters may match on it
+    pub fn describe(self) -> String {
+        match self {
+            Outcome::Reported(q) => format!(
+                "reported (quota left: {})",
+                q.map_or(String::new(), |q| q.to_string())
+            ),
+            Outcome::Paused(s) => format!("skipped (reporting paused for {s}s)"),
+            Outcome::Failed(c) => format!("FAILED (HTTP {c:03})"),
+            Outcome::Dry => "dry-run, not sent".into(),
+            other => other.action().into(),
         }
     }
 
@@ -56,7 +72,7 @@ impl Outcome {
 
     /// done with this ip for the dedupe window; failures retry on the next connect
     pub fn settled(self) -> bool {
-        !matches!(self, Outcome::Paused | Outcome::Failed)
+        !matches!(self, Outcome::Paused(_) | Outcome::Failed(_))
     }
 }
 
@@ -123,6 +139,41 @@ mod tests {
             "",
         ] {
             assert!(check_url("U", bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn logs_in_the_old_reporters_words() {
+        for (o, text) in [
+            (Outcome::Reported(Some(987)), "reported (quota left: 987)"),
+            (Outcome::Reported(None), "reported (quota left: )"),
+            (Outcome::Paused(30), "skipped (reporting paused for 30s)"),
+            (Outcome::Failed(500), "FAILED (HTTP 500)"),
+            (Outcome::Failed(0), "FAILED (HTTP 000)"),
+            (Outcome::Dry, "dry-run, not sent"),
+        ] {
+            assert_eq!(o.describe(), text);
+        }
+    }
+
+    /// a dashboard validates "a" with ^[a-z]{2,12}$ and calls anything else unknown
+    #[test]
+    fn event_actions_keep_their_shape() {
+        for o in [
+            Outcome::Reported(None),
+            Outcome::Delivered,
+            Outcome::Rejected,
+            Outcome::Dedup,
+            Outcome::Paused(1),
+            Outcome::Failed(1),
+            Outcome::Dry,
+            Outcome::NotSsh,
+        ] {
+            let a = o.action();
+            assert!(
+                (2..=12).contains(&a.len()) && a.bytes().all(|b| b.is_ascii_lowercase()),
+                "{a}"
+            );
         }
     }
 

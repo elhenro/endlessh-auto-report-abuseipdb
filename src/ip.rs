@@ -1,5 +1,6 @@
 //! address filtering: what is pointless to report, and the operator's allowlist
 
+use crate::legacy::was_valid_allowlist_entry;
 use std::net::IpAddr;
 
 pub fn is_reserved(ip: IpAddr) -> bool {
@@ -67,9 +68,13 @@ impl AllowList {
             let (addr, len) = entry
                 .split_once('/')
                 .map_or((entry, None), |(a, l)| (a, Some(l)));
-            let ip: IpAddr = addr
-                .parse()
-                .map_err(|_| format!("ALLOWLIST: '{entry}' is not an ip or cidr"))?;
+            let Ok(ip) = addr.parse::<IpAddr>() else {
+                if was_valid_allowlist_entry(entry) {
+                    log!("warning: ALLOWLIST: '{entry}' matches no address, ignored");
+                    continue;
+                }
+                return Err(format!("ALLOWLIST: '{entry}' is not an ip or cidr"));
+            };
             let width = bits(ip).1;
             let prefix = match len {
                 None => width,
@@ -173,6 +178,10 @@ mod tests {
             assert!(AllowList::parse(bad).is_err(), "{bad}");
         }
         assert!(AllowList::parse("").unwrap().0.is_empty());
+        assert!(
+            AllowList::parse("010.0.0.1").unwrap().0.is_empty(),
+            "the old reporter took it"
+        );
         assert!(AllowList::parse("0.0.0.0/0")
             .unwrap()
             .contains(ip("8.8.8.8")));

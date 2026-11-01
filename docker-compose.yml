@@ -1,21 +1,19 @@
+# works with any .env the old version wrote. what is new and needs setup lives in the other
+# docker-compose.*.yml, turned on through COMPOSE_FILE in .env; the installer does that on a fresh install
 services:
   endlessh:
     image: ghcr.io/elhenro/endlessh-auto-report-abuseipdb:latest
     build: .
     container_name: endlessh-reporter
     restart: unless-stopped
-    init: true
+    # no init: true. this is a single process that handles its own signals, and an init would be a
+    # second one under the same uid that a host process can read the container's files through
     ports:
       - "${HOST_PORT:-22}:2222"
     env_file: .env
     environment:
-      # docker inspect shows the environment, so the key comes in as a file
-      API_TOKEN_FILE: /run/secrets/api_token
       # the container always listens on 2222; this is the port the world sees
       HOST_PORT: ${HOST_PORT:-22}
-    # a webhook secret works the same way: add webhook_auth here and below, set WEBHOOK_AUTH_FILE
-    secrets:
-      - api_token
     volumes:
       - reported:/data
     read_only: true
@@ -38,19 +36,5 @@ services:
         max-size: "10m"
         max-file: "3"
 
-networks:
-  default:
-    # without ipv6 on this network docker's proxy answers v6 clients itself and the tarpit only ever
-    # sees the gateway's address: no limit per source and no reports for anyone on ipv6
-    enable_ipv6: true
-    ipam:
-      config:
-        - subnet: fd7c:4a2b:91e3::/64
-
 volumes:
   reported:
-
-secrets:
-  api_token:
-    # 0644 inside a 0700 directory: the container's uid can read it, other host users cannot
-    file: ./secrets/api_token

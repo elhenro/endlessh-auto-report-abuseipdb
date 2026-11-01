@@ -140,3 +140,25 @@ fn refuses_a_passed_fd_that_is_not_a_socket() {
     let _ = child.wait();
     assert_eq!(exited.and_then(|s| s.code()), Some(1));
 }
+
+/// a process under the same uid on the host must not get at the container's files or memory through /proc.
+/// the kernel signals that by handing the files in /proc/<pid> to root. pointless to check as root
+#[cfg(target_os = "linux")]
+#[test]
+fn cannot_be_inspected_by_its_own_uid() {
+    use std::os::unix::fs::MetadataExt;
+    let _serial = serial();
+    let me = std::fs::metadata("/proc/self/environ").unwrap().uid();
+    if me == 0 {
+        return;
+    }
+    let port = free_port();
+    let t = Running::start(command(BIN).env("TARPIT_PORT", port.to_string()));
+    let environ = format!("/proc/{}/environ", t.child.id());
+    assert_eq!(
+        std::fs::metadata(&environ).unwrap().uid(),
+        0,
+        "still owned by uid {me}"
+    );
+    assert!(std::fs::read(&environ).is_err());
+}

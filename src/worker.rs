@@ -4,8 +4,9 @@
 use crate::{
     events::EventLog,
     ip::{is_reserved, network, AllowList},
+    reported::ReportedFile,
     sinks::{Outcome, Sink, Visit},
-    tarpit::Event,
+    tarpit::{now_unix, Event},
 };
 use std::{
     collections::HashMap,
@@ -62,6 +63,8 @@ pub struct Worker {
     dedupe: Duration,
     sinks: Vec<Tracked>,
     events: Option<EventLog>,
+    report_all: bool,
+    reported: Option<ReportedFile>,
 }
 
 impl Worker {
@@ -87,7 +90,21 @@ impl Worker {
                 })
                 .collect(),
             events,
+            report_all: false,
+            reported: None,
         }
+    }
+
+    /// also report clients that never said `SSH-`, as the old reporter did. see REPORT_ALL_CONNECTIONS in the readme
+    pub fn report_all(mut self, on: bool) -> Self {
+        self.report_all = on;
+        self
+    }
+
+    /// keep an audit file of what the api accepted
+    pub fn reported_to(mut self, file: Option<ReportedFile>) -> Self {
+        self.reported = file;
+        self
     }
 
     /// returns once every sender is gone
@@ -115,7 +132,7 @@ impl Worker {
             log!("connect {ip} -> skipped ({why})");
             return;
         }
-        if !ssh {
+        if !ssh && !self.report_all {
             log!("connect {ip} -> skipped (not an ssh client)");
             return self.record(t, ip, Outcome::NotSsh);
         }
@@ -126,6 +143,15 @@ impl Worker {
             .iter_mut()
             .map(|s| s.visit(&visit, dedupe))
             .collect();
+        if outcomes
+            .iter()
+            .flatten()
+            .any(|o| matches!(o, Outcome::Reported(_)))
+        {
+            if let Some(file) = self.reported.as_mut() {
+                file.add(now_unix(), ip);
+            }
+        }
         match outcomes[0] {
             None => {
                 log!(
@@ -135,9 +161,9 @@ impl Worker {
                 self.record(t, ip, Outcome::Dedup);
             }
             Some(primary) => {
-                match primary.quota() {
-                    Some(q) => log!("connect {ip} -> {} (quota left: {q})", primary.action()),
-                    None => log!("connect {ip} -> {}", primary.action()),
+                // a rejection was logged with the api's reason already
+                if primary != Outcome::Rejected {
+                    log!("connect {ip} -> {}", primary.describe());
                 }
                 self.record(t, ip, primary);
             }

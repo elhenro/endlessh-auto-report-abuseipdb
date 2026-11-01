@@ -12,6 +12,18 @@ pub fn date_string(days: i64) -> String {
     format!("{:04}-{m:02}-{d:02}", yoe + era * 400 + i64::from(m <= 2))
 }
 
+/// 2026-01-01T00:00:00Z
+pub fn timestamp(t: u64) -> String {
+    let s = t % 86_400;
+    format!(
+        "{}T{:02}:{:02}:{:02}Z",
+        date_string((t / 86_400) as i64),
+        s / 3600,
+        s / 60 % 60,
+        s % 60
+    )
+}
+
 pub fn parse_date(s: &str) -> Option<i64> {
     let mut parts = s.splitn(3, '-').map(|p| p.parse::<i64>().ok());
     let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
@@ -39,5 +51,6 @@ mod tests {
         }
         assert_eq!(parse_date("nope"), None);
         assert_eq!(parse_date("2025-13-01"), None);
+        assert_eq!(timestamp(1_760_000_000), "2025-10-09T08:53:20Z");
     }
 }

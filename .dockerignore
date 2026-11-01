@@ -10,5 +10,7 @@ secrets
 systemd
 install.sh
 install-ports.sh
-docker-compose.yml
+docker-compose*.yml
+tarpitReporter.sh
+reportedIps.txt
 data/

@@ -119,7 +119,7 @@ fn a_client_that_is_no_ssh_client_reaches_no_sink() {
     assert_eq!(
         lines,
         [
-            r#"{"t":1760000000,"e":"accept","ip":"8.8.8.8","a":"not_ssh"}"#,
+            r#"{"t":1760000000,"e":"accept","ip":"8.8.8.8","a":"notssh"}"#,
             r#"{"t":1760000000,"e":"accept","ip":"8.8.8.8","a":"reported"}"#,
         ]
     );

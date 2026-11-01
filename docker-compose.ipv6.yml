@@ -1,0 +1,9 @@
+# on through COMPOSE_FILE in .env. without ipv6 on this network docker's proxy answers v6 clients itself and
+# the tarpit only ever sees the gateway's address: no limit per source and no reports for anyone on ipv6.
+# a kernel booted with ipv6.disable=1 cannot create this network
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd7c:4a2b:91e3::/64

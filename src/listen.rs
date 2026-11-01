@@ -1,5 +1,6 @@
 //! where the tarpit listens: the socket systemd passed in, else a dual-stack socket
 
+use crate::legacy::Family;
 use socket2::{Domain, Protocol, SockRef, Socket, Type};
 use std::{
     env, fs, io,
@@ -15,8 +16,8 @@ pub const RECV_BUFFER: usize = 1;
 /// its minimum, 4608; macos takes it literally, and much less would cut every banner line short
 pub const SEND_BUFFER: usize = 2304;
 
-/// the listener systemd passed in (socket activation), else a dual-stack socket on `port`
-pub fn listen(port: u16) -> io::Result<TcpListener> {
+/// the listener systemd passed in (socket activation), else a socket on `port`: dual-stack unless asked for one family
+pub fn listen(port: u16, family: Option<Family>) -> io::Result<TcpListener> {
     if let Some(l) = inherited() {
         // a closed or non-socket fd 3 fails here instead of as an endless accept error loop
         l.local_addr()?;
@@ -25,11 +26,13 @@ pub fn listen(port: u16) -> io::Result<TcpListener> {
         s.set_send_buffer_size(SEND_BUFFER)?;
         return Ok(l);
     }
+    let v4 = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+    let v6 = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
     let bind = |domain: Domain, addr: SocketAddr| -> io::Result<TcpListener> {
         let s = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
         s.set_reuse_address(true)?;
         if domain == Domain::IPV6 {
-            s.set_only_v6(false)?;
+            s.set_only_v6(family == Some(Family::V6))?;
         }
         s.bind(&addr.into())?;
         s.set_recv_buffer_size(RECV_BUFFER)?;
@@ -37,11 +40,15 @@ pub fn listen(port: u16) -> io::Result<TcpListener> {
         s.listen(1024)?;
         Ok(s.into())
     };
-    bind(Domain::IPV6, (Ipv6Addr::UNSPECIFIED, port).into()).or_else(|e| {
-        // ipv6 off, or the port taken on v6 only. net.ipv6.bindv6only is not a cause: set_only_v6 overrides it
-        log!("warning: no ipv6 listener on port {port} ({e}), trying ipv4 only");
-        bind(Domain::IPV4, (Ipv4Addr::UNSPECIFIED, port).into())
-    })
+    match family {
+        Some(Family::V4) => bind(Domain::IPV4, v4),
+        Some(Family::V6) => bind(Domain::IPV6, v6),
+        None => bind(Domain::IPV6, v6).or_else(|e| {
+            // ipv6 off, or the port taken on v6 only. net.ipv6.bindv6only is not a cause: set_only_v6 overrides it
+            log!("warning: no ipv6 listener on port {port} ({e}), trying ipv4 only");
+            bind(Domain::IPV4, v4)
+        }),
+    }
 }
 
 #[allow(unsafe_code)] // from_raw_fd on the fd systemd hands us; checked via LISTEN_PID/LISTEN_FDS
@@ -74,7 +81,7 @@ mod tests {
 
     #[test]
     fn accepted_sockets_inherit_the_small_buffers() {
-        let l = listen(0).unwrap();
+        let l = listen(0, None).unwrap();
         let port = l.local_addr().unwrap().port();
         let _client = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let (accepted, _) = l.accept().unwrap();
