@@ -223,7 +223,10 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel(4096);
     let worker = Worker::new(cfg.allowlist, cfg.dedupe, sinks, events)
         .report_all(cfg.report_all)
-        .reported_to(cfg.reported_file.map(ReportedFile::new));
+        .reported_to(
+            cfg.reported_file
+                .map(|p| ReportedFile::new(p, cfg.reported_max_bytes)),
+        );
     thread::Builder::new()
         .name("worker".into())
         .spawn(move || worker.run(rx))

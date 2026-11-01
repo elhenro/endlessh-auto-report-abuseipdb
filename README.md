@@ -22,9 +22,9 @@ Image: `ghcr.io/elhenro/endlessh-auto-report-abuseipdb` (amd64, arm64). `:latest
 
 ## Upgrading from the bash version
 
-Nothing has to change: an old `.env` or `/etc/endlessh-reporter/env` keeps working, on the same volume with the same `reportedIps.txt`, and going back to the old image works too. Docker: `docker compose pull && docker compose up -d`. Systemd: `git pull && sudo ./install.sh --systemd`.
+Nothing has to change: an old `.env` or `/etc/endlessh-reporter/env` keeps working, on the same volume with the same `reportedIps.txt`, and going back to the old image works too. Docker: `docker compose pull && docker compose up -d`. Systemd: `git pull && sudo ./install.sh --systemd`. v2 appends to the existing `reportedIps.txt` in the old format; its dedupe lives in memory and starts empty, so an IP the bash version reported inside one dedupe window can be reported once more.
 
-Old settings, flags, exit codes and `tarpitReporter.sh` all still work. The new binary also reads the existing `reportedIps.txt` at start, so an IP the bash version reported recently is not reported again. What differs, on purpose:
+Old settings, flags, exit codes and `tarpitReporter.sh` all still work. What differs, on purpose:
 
 | what | old | now | to get the old behaviour |
 |---|---|---|---|
@@ -117,6 +117,7 @@ docker compose run --rm endlessh /usr/local/bin/endlessh-reporter status
 | `CATEGORIES` | `18,22` | AbuseIPDB categories: `18` brute force, `22` SSH; same as v1 |
 | `HTTP_TIMEOUT` | `10` | seconds per API call (1-120); old name `CURL_TIMEOUT` works |
 | `REPORTED_FILE` | `/data/reportedIps.txt`, systemd `/var/lib/endlessh-reporter/reportedIps.txt` | what AbuseIPDB accepted, `<time> <ip>` per line; empty turns it off; a symlink is refused |
+| `REPORTED_MAX_MB` | `10` | rotate the audit file past this size: it becomes `reportedIps.txt.old` and appending starts over (10 MB ≈ 370k lines, about two years at this host's rate) |
 | `EVENTS_DIR` | systemd `/var/lib/endlessh-reporter/events` | write the [event log](#event-log) here; empty turns it off |
 | `EVENTS_RETENTION_DAYS` | `30` | delete older event files |
 | `EVENTS_MAX_DAILY_MB` | `100` | stop writing events for the UTC day past this size |

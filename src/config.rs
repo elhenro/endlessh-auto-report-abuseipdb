@@ -23,6 +23,7 @@ pub struct Config {
     pub events_dir: Option<PathBuf>,
     pub events_retention_days: u32,
     pub events_max_bytes: u64,
+    pub reported_max_bytes: u64,
     pub public_port: Option<u16>,
     pub abuseipdb_url: String,
     pub api_token: Option<String>,
@@ -129,6 +130,14 @@ impl Config {
             events_max_bytes: range(
                 "EVENTS_MAX_DAILY_MB",
                 num("EVENTS_MAX_DAILY_MB", 100u64)?,
+                1,
+                1_000_000,
+            )? * 1024
+                * 1024,
+            // the audit file rotates instead of growing forever; 10 MB is years of reports
+            reported_max_bytes: range(
+                "REPORTED_MAX_MB",
+                num("REPORTED_MAX_MB", 10u64)?,
                 1,
                 1_000_000,
             )? * 1024
