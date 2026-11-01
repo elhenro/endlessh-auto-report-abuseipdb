@@ -1,3 +1,7 @@
+/target
 .env
+.env.*
+!.env.example
+secrets/
 reportedIps.txt
 data/

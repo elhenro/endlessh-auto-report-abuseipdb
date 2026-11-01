@@ -1,6 +1,8 @@
 name: docker
 
-# master -> :edge, tag vX.Y.Z -> :X.Y.Z / :X.Y / :latest, weekly rebuild picks up debian security fixes
+# master -> :edge, tag vX.Y.Z -> :X.Y.Z / :X.Y / :latest and a release with the binaries. :latest is what
+# compose pulls, so only a tag moves it. the base images are pinned by digest, so a fix reaches users when
+# its dependabot bump is merged and tagged. the weekly run scans the same image against a fresh vulnerability database
 # actions are pinned to commit SHAs; dependabot bumps them and the version comments
 on:
   push:
@@ -17,24 +19,32 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
-  # read-only token: nothing here can publish
+  # read-only token: nothing here can publish, and no build cache leads from here to publish.
+  # this job is the gate of every image, so it runs everything that has to hold: tests, known
+  # vulnerabilities in the crates, and the scan of the image, which sees the crates through cargo-auditable
   scan:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo test --locked
+      - name: known vulnerabilities in Cargo.lock
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true
           tags: scan:local
-          cache-from: type=gha
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: scan:local
-          severity: CRITICAL
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
 
@@ -42,11 +52,18 @@ jobs:
     needs: scan
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     permissions:
       contents: read
       packages: write
+      # the signed build attestation: gh attestation verify oci://<image> --owner elhenro
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -63,14 +80,49 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      # built from scratch every time: a shared cache could hand this job layers nobody here built
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           provenance: true
           sbom: true
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  # for systemd hosts without a rust toolchain: the binaries out of the image just published, nothing built here
+  release:
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # the binaries get a build attestation too: a checksum from the same release only proves the
+      # download survived the network, not who built it. `gh attestation verify <file> --repo ...`
+      id-token: write
+      attestations: write
+    steps:
+      - name: take the binaries out of the image
+        env:
+          REF: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+        run: |
+          for pair in amd64:x86_64 arm64:aarch64; do
+            id=$(docker create --platform "linux/${pair%:*}" "$REF")
+            docker cp "$id:/usr/local/bin/endlessh-reporter" "endlessh-reporter-${pair#*:}"
+            docker rm "$id"
+          done
+          sha256sum endlessh-reporter-* > SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: endlessh-reporter-*
+      - name: attach them to a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes endlessh-reporter-* SHA256SUMS

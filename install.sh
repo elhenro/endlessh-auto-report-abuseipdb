@@ -2,6 +2,8 @@
 # guided installer: docker (default) or systemd (--systemd). never touches your sshd config.
 set -eu
 cd "$(dirname "$0")"
+# shellcheck source=install-ports.sh
+. ./install-ports.sh
 
 MODE=docker BUILD=0 DRY=0 YES=0 PORT=22
 USAGE="usage: ./install.sh [--systemd] [--build] [--dry-run] [--yes]
@@ -46,55 +48,58 @@ get_token() {
   done
 }
 
-port_busy() {
-  if command -v ss >/dev/null; then [ -n "$(ss -ltnH "sport = :$1" 2>/dev/null)" ]
-  elif command -v lsof >/dev/null; then lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
-  else (exec 3<>/dev/tcp/127.0.0.1/"$1") 2>/dev/null; fi
-}
-
-# sets PORT; a port held by our own running install does not count as busy
-choose_port() { # default
-  PORT=${HOST_PORT:-${TARPIT_PORT:-$1}}
-  if port_busy "$PORT" && ! own_service_running; then
-    say "port $PORT is in use (on :22 that is probably your real sshd)."
-    say "try the tarpit on 2222 first; move sshd, then re-run with HOST_PORT=22."
-    ask "port to use" 2222; PORT=$REPLY
-    ! port_busy "$PORT" || die "port $PORT is busy too"
-  fi
-}
-
-own_service_running() {
-  if [ "$MODE" = systemd ]; then systemctl is-active --quiet endlessh-reporter 2>/dev/null
-  else [ -n "$(docker compose ps -q 2>/dev/null)" ]; fi
-}
-
-# connect once, then look for the reporter's "connect" log line
+# connect, then look for the reporter's "connect" log line, which comes on the tarpit's first tick
+# for that client. retries, because docker's proxy accepts on the published port while the binary
+# is still checking the token and not listening yet
 self_test() { # log command...
   say "testing the tarpit on port $PORT ..."
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    (exec 3<>/dev/tcp/127.0.0.1/"$PORT") 2>/dev/null && break
-    sleep 1
+  for _ in 1 2 3 4 5 6 7 8; do
+    (exec 3<>/dev/tcp/127.0.0.1/"${PORT##*:}") 2>/dev/null || true
+    sleep 3
+    if "$@" 2>&1 | grep -q 'tarpit: connect '; then
+      say "OK: the tarpit accepted a test connection and the reporter saw it."
+      return
+    fi
   done
-  sleep 1
-  if "$@" 2>&1 | grep -q 'tarpit: connect '; then
-    say "OK: the tarpit accepted a test connection and the reporter saw it."
-  else
-    say "WARNING: no connection showed up in the logs. check: $*"
-  fi
+  say "WARNING: no connection showed up in the logs. check: $*"
+}
+
+# a kernel booted with ipv6 off cannot create that network
+compose_files() {
+  printf 'docker-compose.yml:docker-compose.secrets.yml'
+  [ ! -d /proc/sys/net/ipv6 ] || printf ':docker-compose.ipv6.yml'
+}
+
+# the container's uid must read the key: the file is 0644, the 0700 directory keeps other host users out
+write_token() {
+  ( umask 077; mkdir -p secrets )
+  chmod 700 secrets
+  ( umask 022; printf '%s' "${API_TOKEN:-}" > secrets/api_token )
 }
 
 write_env() {
   if [ -f .env ]; then
     say "keeping existing .env (delete it to reconfigure)"
-    PORT=$(sed -n 's/^HOST_PORT=//p' .env | tail -1)
+    PORT=$(sed -n 's/^HOST_PORT=//p' .env | tail -1 | tr -d "\"'")
     PORT=${PORT:-22}
+    DRY=$(sed -n 's/^DRY_RUN=//p' .env | tail -1 | tr -d "\"'")
+    DRY=${DRY:-0}
+    if grep -q '^API_TOKEN=.' .env; then
+      say "note: API_TOKEN in .env keeps working but shows up in docker inspect, see 'Upgrading from the bash version' in the readme"
+    fi
+    # only a .env that turned on the secrets file needs it to exist
+    if grep -q '^COMPOSE_FILE=.*secrets' .env && [ ! -f secrets/api_token ]; then
+      API_TOKEN="" write_token
+    fi
     return
   fi
   choose_port 22
   [ "$DRY" = 1 ] || get_token
+  hold_reports
   ask "your own public ips to never report (comma separated, optional)" ""
   ( umask 077
-    printf 'API_TOKEN=%s\nHOST_PORT=%s\nDRY_RUN=%s\nALLOWLIST=%s\n' "${API_TOKEN:-}" "$PORT" "$DRY" "$REPLY" > .env )
+    printf 'COMPOSE_FILE=%s\nHOST_PORT=%s\nDRY_RUN=%s\nALLOWLIST=%s\n' "$(compose_files)" "$PORT" "$DRY" "$REPLY" > .env )
+  write_token
 }
 
 install_docker() {
@@ -102,22 +107,35 @@ install_docker() {
   docker compose version >/dev/null 2>&1 || die "docker compose plugin missing"
   docker info >/dev/null 2>&1 || die "cannot reach the docker daemon (permissions? try sudo)"
   write_env
+  require_port
   if [ "$BUILD" = 1 ]; then docker compose build
   else docker compose pull || { say "pull failed, building locally"; docker compose build; }; fi
-  docker compose up -d
+  # a container that failed to start stays around, and its restart policy can try again at next boot
+  if ! docker compose up -d; then
+    docker compose down >/dev/null 2>&1 || true
+    die "could not start the tarpit, see above"
+  fi
   self_test docker compose logs --since 1m
   say "logs:    docker compose logs -f"
   say "stop:    docker compose down"
 }
 
 next_steps() {
-  if [ "$PORT" = 22 ]; then
+  if [ "${PORT##*:}" = 22 ]; then
     say "tarpit is live on :22. check that your real sshd answers on its new port from a second terminal."
   else
     say "tarpit is running on :$PORT. bots mostly hit :22, so to go live:"
     say "  1. set 'Port <n>' in sshd_config (n in 1024-65535), run 'sshd -t', open <n> in your firewall/cloud security group"
     say "  2. reload sshd and confirm 'ssh -p <n> host' works from a second terminal BEFORE closing this one"
-    say "  3. re-run with HOST_PORT=22 (delete .env first, or edit HOST_PORT in it)"
+    if [ "$MODE" = systemd ]; then
+      say "  3. set TARPIT_PORT=22 and DRY_RUN=0 in /etc/endlessh-reporter/env and re-run this installer"
+    else
+      say "  3. set HOST_PORT=22 and DRY_RUN=0 in .env and re-run this installer"
+    fi
+    if [ "$DRY" = 0 ]; then
+      say "warning: DRY_RUN=0 on :$PORT. browsers only refuse 22, and a web page using dns rebinding can make them"
+      say "open with SSH- here and get its visitors reported. set DRY_RUN=1 until the tarpit is on 22."
+    fi
   fi
 }
 

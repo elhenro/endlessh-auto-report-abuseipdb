@@ -1,0 +1,189 @@
+//! a sink gets every fresh visitor once per dedupe window and reports it somewhere
+
+use std::{net::IpAddr, time::Instant};
+use url::Url;
+
+pub struct Visit {
+    pub t: u64,
+    pub ip: IpAddr,
+    pub port: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// accepted by AbuseIPDB, with the reports left today
+    Reported(Option<u64>),
+    /// accepted by a generic sink such as the webhook
+    Delivered,
+    /// the api refused this ip for good, retrying is pointless
+    Rejected,
+    /// reported recently, by us or by another host on the same key
+    Dedup,
+    /// seconds left
+    Paused(u64),
+    /// the http status, 0 for no answer
+    Failed(u16),
+    /// no sink configured
+    Dry,
+    /// never said it speaks ssh: nothing to report
+    NotSsh,
+}
+
+/// ureq hands 1xx over as a response too, and with redirects off 3xx as well: neither did the job
+pub fn is_success(status: u16) -> bool {
+    (200..300).contains(&status)
+}
+
+impl Outcome {
+    /// value of the "a" field in the event log
+    pub fn action(self) -> &'static str {
+        match self {
+            Outcome::Reported(_) => "reported",
+            Outcome::Delivered => "delivered",
+            Outcome::Rejected => "rejected",
+            Outcome::Dedup => "dedup",
+            Outcome::Paused(_) => "paused",
+            Outcome::Failed(_) => "failed",
+            Outcome::Dry => "dry",
+            Outcome::NotSsh => "notssh",
+        }
+    }
+
+    /// what the log says after "connect <ip> -> ". the old reporter's wording: log filters may match on it
+    pub fn describe(self) -> String {
+        match self {
+            Outcome::Reported(q) => format!(
+                "reported (quota left: {})",
+                q.map_or(String::new(), |q| q.to_string())
+            ),
+            Outcome::Paused(s) => format!("skipped (reporting paused for {s}s)"),
+            Outcome::Failed(c) => format!("FAILED (HTTP {c:03})"),
+            Outcome::Dry => "dry-run, not sent".into(),
+            other => other.action().into(),
+        }
+    }
+
+    pub fn quota(self) -> Option<u64> {
+        match self {
+            Outcome::Reported(q) => q,
+            _ => None,
+        }
+    }
+
+    /// done with this ip for the dedupe window; failures retry on the next connect
+    pub fn settled(self) -> bool {
+        !matches!(self, Outcome::Paused(_) | Outcome::Failed(_))
+    }
+}
+
+pub trait Sink: Send {
+    fn name(&self) -> &'static str;
+    fn send(&mut self, visit: &Visit) -> Outcome;
+}
+
+/// pause a sink after errors instead of hammering a struggling api
+#[derive(Default)]
+pub struct Backoff(Option<Instant>);
+
+impl Backoff {
+    pub fn set(&mut self, secs: u64) {
+        self.0 = Some(Instant::now() + std::time::Duration::from_secs(secs.min(86_400)));
+    }
+
+    pub fn remaining(&self) -> Option<u64> {
+        let left = self.0?.checked_duration_since(Instant::now())?;
+        Some(left.as_secs() + 1)
+    }
+}
+
+/// https only, except for loopback so tests and local receivers work.
+/// asks the parser ureq connects with: prefix checks wave http://localhost:80@evil.example/ through
+pub fn check_url(name: &str, url: &str) -> Result<(), String> {
+    let allowed = Url::parse(url).is_ok_and(|u| match u.scheme() {
+        "https" => true,
+        "http" => matches!(u.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")),
+        _ => false,
+    });
+    if allowed {
+        Ok(())
+    } else {
+        Err(format!(
+            "{name} must be an https:// url (http:// only for localhost)"
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn url_policy() {
+        for ok in [
+            "https://api.abuseipdb.com/api/v2",
+            "http://127.0.0.1:8080/x",
+            "http://localhost/",
+            "http://[::1]:9",
+        ] {
+            assert!(check_url("U", ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://example.com",
+            "http://127.0.0.1.evil.com/",
+            "ftp://x",
+            "http://localhost.evil.com",
+            "http://localhost:80@evil.example/",
+            "http://127.0.0.1:1@evil.example/api",
+            "http://[::1]:1@evil.example/",
+            "https://",
+            "",
+        ] {
+            assert!(check_url("U", bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn logs_in_the_old_reporters_words() {
+        for (o, text) in [
+            (Outcome::Reported(Some(987)), "reported (quota left: 987)"),
+            (Outcome::Reported(None), "reported (quota left: )"),
+            (Outcome::Paused(30), "skipped (reporting paused for 30s)"),
+            (Outcome::Failed(500), "FAILED (HTTP 500)"),
+            (Outcome::Failed(0), "FAILED (HTTP 000)"),
+            (Outcome::Dry, "dry-run, not sent"),
+        ] {
+            assert_eq!(o.describe(), text);
+        }
+    }
+
+    /// a dashboard validates "a" with ^[a-z]{2,12}$ and calls anything else unknown
+    #[test]
+    fn event_actions_keep_their_shape() {
+        for o in [
+            Outcome::Reported(None),
+            Outcome::Delivered,
+            Outcome::Rejected,
+            Outcome::Dedup,
+            Outcome::Paused(1),
+            Outcome::Failed(1),
+            Outcome::Dry,
+            Outcome::NotSsh,
+        ] {
+            let a = o.action();
+            assert!(
+                (2..=12).contains(&a.len()) && a.bytes().all(|b| b.is_ascii_lowercase()),
+                "{a}"
+            );
+        }
+    }
+
+    #[test]
+    fn backoff_expires_and_caps() {
+        let mut b = Backoff::default();
+        assert_eq!(b.remaining(), None);
+        b.set(30);
+        assert!(b.remaining().is_some_and(|s| (29..=31).contains(&s)));
+        b.set(10_000_000);
+        assert!(b.remaining().is_some_and(|s| s <= 86_401));
+    }
+}
