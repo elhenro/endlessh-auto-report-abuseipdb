@@ -167,6 +167,78 @@ fn temp(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+/// which port the installer believes sshd wants, with systemctl/sshd stubbed on PATH
+fn sshd_wants(tag: &str, systemctl: &str, sshd: Option<&str>, ports: &[u16]) -> String {
+    let dir = temp(tag);
+    let bin = dir.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let exe = |name: &str, body: &str| {
+        let path = bin.join(name);
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    };
+    exe("systemctl", systemctl);
+    if let Some(body) = sshd {
+        exe("sshd", body);
+    }
+    let script = format!(
+        "say() {{ :; }}; die() {{ exit 1; }}; MODE=systemd; . ./install-ports.sh
+         for p in {}; do sshd_wants $p && echo \"$p yes\" || echo \"$p no\"; done",
+        ports
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let out = Command::new("bash")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .args(["-c", &script])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// an install that moved sshd to make room for the tarpit: the socket unit owns the port, and
+/// sshd_config's `Port` (or its absence, meaning 22) is not what sshd listens on
+#[test]
+fn the_installer_reads_sshd_port_from_the_socket_unit() {
+    let got = sshd_wants(
+        "sshd-wants-socket",
+        r#"case $1 in
+             is-enabled) [ "$3" = ssh.socket ] ;;
+             show) printf '%s\n' "0.0.0.0:2247 (Stream)" "[::]:2247 (Stream)" ;;
+             *) exit 1 ;;
+           esac"#,
+        Some("exit 1"), // sshd -T would claim 22, and must not be asked
+        &[22, 2247],
+    );
+    assert_eq!(got, "22 no\n2247 yes\n");
+}
+
+/// without a socket unit the config decides: sshd -T still names the port
+#[test]
+fn the_installer_reads_sshd_port_from_the_config_without_a_socket_unit() {
+    let got = sshd_wants(
+        "sshd-wants-config",
+        r#"case $1 in
+             is-enabled) [ "$3" = ssh ] ;;
+             *) exit 1 ;;
+           esac"#,
+        Some(r#"[ "$1" = -T ] && echo "port 2345""#),
+        &[22, 2345],
+    );
+    assert_eq!(got, "22 no\n2345 yes\n");
+}
+
 /// runs a worker over `events` against an api answering `status`; returns (api calls, audit file)
 fn run(status: &str, report_all: bool, events: Vec<Event>, tag: &str) -> (usize, String) {
     let (base, seen) = mock_api(status, "", "{}");
