@@ -59,6 +59,14 @@ pub fn site(ip: IpAddr) -> IpAddr {
 pub struct AllowList(Vec<(IpAddr, u8)>);
 
 impl AllowList {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn parse(s: &str) -> Result<Self, String> {
         let mut out = Vec::new();
         for entry in s
