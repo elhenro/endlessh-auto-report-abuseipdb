@@ -251,7 +251,7 @@ fn run(status: &str, report_all: bool, events: Vec<Event>, tag: &str) -> (usize,
         None,
     )
     .report_all(report_all)
-    .reported_to(Some(ReportedFile::new(file.clone())));
+    .reported_to(Some(ReportedFile::new(file.clone(), u64::MAX)));
     let (tx, rx) = mpsc::sync_channel(64);
     for e in events {
         tx.send(e).unwrap();
