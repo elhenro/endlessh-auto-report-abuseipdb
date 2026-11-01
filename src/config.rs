@@ -35,6 +35,9 @@ pub struct Config {
 /// endlessh's own upper limit on its delay and client count, which the old reporter passed through
 const ENDLESSH_MAX: u32 = i32::MAX as u32;
 
+/// what the bash version sent when `CATEGORIES` was unset: keep it, so old reports and new agree
+pub const DEFAULT_CATEGORIES: &str = "18,22";
+
 pub fn check_categories(c: &str) -> Result<(), String> {
     let ok = !c.is_empty()
         && c.split(',')
@@ -66,7 +69,7 @@ fn http_timeout() -> Result<u64, String> {
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         let dry_run = flag("DRY_RUN")?;
-        let categories = var("CATEGORIES").unwrap_or_else(|| "14,22".into());
+        let categories = var("CATEGORIES").unwrap_or_else(|| DEFAULT_CATEGORIES.into());
         check_categories(&categories)?;
         let abuseipdb_url =
             var("ABUSEIPDB_URL").unwrap_or_else(|| "https://api.abuseipdb.com/api/v2".into());

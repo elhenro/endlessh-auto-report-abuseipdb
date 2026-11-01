@@ -92,8 +92,9 @@ impl Sink for AbuseIpdb {
             return Outcome::Paused(left);
         }
         let ip = v.ip.to_string();
+        // the same comment the bash version sent, so reports read the same on abuseipdb
         let comment = format!(
-            "Connected to SSH tarpit, no login attempted (src port {})",
+            "SSH login attempts (endlessh): ACCEPT host={ip} port={}",
             v.port
         );
         let req = self.authed(self.agent.post(&format!("{}/report", self.base)));
