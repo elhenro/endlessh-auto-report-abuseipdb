@@ -1,5 +1,3 @@
-//! settings come from the environment; everything the old bash reporter read still works, see legacy.rs
-
 use crate::{
     env::{flag, num, range, secret, var},
     ip::AllowList,
@@ -32,10 +30,9 @@ pub struct Config {
     pub webhook_auth: Option<String>,
 }
 
-/// endlessh's own upper limit on its delay and client count, which the old reporter passed through
 const ENDLESSH_MAX: u32 = i32::MAX as u32;
 
-/// what the bash version sent when `CATEGORIES` was unset: keep it, so old reports and new agree
+/// 18 brute force, 22 SSH
 pub const DEFAULT_CATEGORIES: &str = "18,22";
 
 pub fn check_categories(c: &str) -> Result<(), String> {
@@ -49,13 +46,11 @@ pub fn check_categories(c: &str) -> Result<(), String> {
     }
 }
 
-/// a flag in ENDLESSH_ARGS, else the variable, else the default
 fn setting<T: FromStr>(name: &str, flag: Option<T>, default: T) -> Result<T, String> {
     flag.map_or_else(|| num(name, default), Ok)
 }
 
-/// CURL_TIMEOUT is the old name and took any number, with 0 for no limit. a call blocks all
-/// reporting while it runs, so here it stops at the same limit as HTTP_TIMEOUT
+/// a call blocks all reporting while it runs: 0 means no limit, so cap it like HTTP_TIMEOUT
 fn http_timeout() -> Result<u64, String> {
     if var("HTTP_TIMEOUT").is_some() {
         return range("HTTP_TIMEOUT", num("HTTP_TIMEOUT", 10u64)?, 1, 120);

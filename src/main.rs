@@ -79,7 +79,6 @@ fn main() {
              their users reported. set DRY_RUN=1 until the tarpit is on 22"
         );
     }
-    // under systemd the socket unit decides. the old version moved here on a restart, this one cannot
     if env::var_os("TARPIT_PORT").is_some() && bound_port.is_some_and(|p| p != cfg.port) {
         log!(
             "warning: TARPIT_PORT={} is not in effect, the socket passed in is on {bound}: re-run the installer to move it",

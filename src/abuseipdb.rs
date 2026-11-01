@@ -92,7 +92,6 @@ impl Sink for AbuseIpdb {
             return Outcome::Paused(left);
         }
         let ip = v.ip.to_string();
-        // v1's wording, minus the endlessh log line it quoted: there is no endlessh here
         let comment = format!(
             "SSH login attempts: client from port {} held in the tarpit",
             v.port

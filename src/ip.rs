@@ -180,7 +180,7 @@ mod tests {
         assert!(AllowList::parse("").unwrap().0.is_empty());
         assert!(
             AllowList::parse("010.0.0.1").unwrap().0.is_empty(),
-            "the old reporter took it"
+            "accepted, and it cannot match anybody"
         );
         assert!(AllowList::parse("0.0.0.0/0")
             .unwrap()

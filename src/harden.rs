@@ -23,8 +23,7 @@ extern "C" fn exit_now(signal: libc::c_int) {
     unsafe { libc::_exit(128 + signal) }
 }
 
-/// without an init in the container this is pid 1, where the kernel drops signals nobody handles:
-/// `docker stop` would wait out its timeout. exit codes as the old reporter: 143 and 130
+/// as pid 1 the kernel drops signals nobody handles, so `docker stop` would wait out its timeout
 pub fn exit_on_signals() {
     for signal in [libc::SIGTERM, libc::SIGINT] {
         let handler: extern "C" fn(libc::c_int) = exit_now;

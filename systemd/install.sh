@@ -5,7 +5,7 @@ INSTALL_DIR=/opt/endlessh-reporter
 CONF_DIR=/etc/endlessh-reporter
 SOCKET=/etc/systemd/system/endlessh-reporter.socket
 
-# a host without rust gets the release build: the old version needed no toolchain here either
+# a host without rust gets the release binary
 download_binary() {
   local url=https://github.com/elhenro/endlessh-auto-report-abuseipdb/releases/latest/download
   local name dir
@@ -57,7 +57,7 @@ find_binary() {
   BIN=target/release/$BIN_NAME
 }
 
-# endlessh's flags in ENDLESSH_ARGS: the socket unit binds now, so the ones about binding apply here
+# the socket unit binds: the binding flags in ENDLESSH_ARGS decide where
 read_bind_flags() {
   # shellcheck disable=SC2046 # word splitting intended
   set -- $(sed -n 's/^ENDLESSH_ARGS=//p' "$CONF_DIR/env" | tail -1 | tr -d "\"'")

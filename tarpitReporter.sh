@@ -1,6 +1,5 @@
 #!/bin/sh
-# the old entry point, for whatever still starts the bash version by this name. runs from
-# its own directory and keeps its audit file there, as that version did
+# runs from its own directory, so the audit file lands beside it
 cd "$(dirname "$0")" || exit 1
 : "${REPORTED_FILE=reportedIps.txt}"
 export REPORTED_FILE

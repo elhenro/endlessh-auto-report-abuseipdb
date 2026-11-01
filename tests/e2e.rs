@@ -50,7 +50,6 @@ fn reports_once_filters_and_logs_events() {
         r.contains("ip=8.8.8.8") && r.contains("categories=18%2c22"),
         "{r}"
     );
-    // v1's wording without the endlessh log line, and the source port of this client
     assert!(
         r.contains("comment=ssh+login+attempts%3a+client+from+port+40000+held+in+the+tarpit"),
         "{r}"

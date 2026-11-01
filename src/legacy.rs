@@ -1,13 +1,10 @@
-//! what the old bash reporter accepted that has no direct equivalent here
-
-/// bind to one address family only, as endlessh's -4 and -6 did
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
     V4,
     V6,
 }
 
-/// endlessh's flags in ENDLESSH_ARGS. they win over TARPIT_*: the reporter put them last on its command line
+/// ENDLESSH_ARGS values win over the TARPIT_* settings
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct EndlesshArgs {
     pub port: Option<u16>,
@@ -24,7 +21,7 @@ fn number<T: std::str::FromStr>(flag: char, v: &str) -> Result<Option<T>, String
 }
 
 impl EndlesshArgs {
-    /// same grammar as endlessh's getopt: clusters like -46, values as -l64 or -l 64, last one wins
+    /// clusters like -46, values as -l64 or -l 64, last one wins
     pub fn parse(s: &str) -> Result<Self, String> {
         let mut out = Self::default();
         let mut words = s.split_whitespace();
@@ -63,8 +60,7 @@ impl EndlesshArgs {
     }
 }
 
-/// the old reporter compared allowlist entries as text, so it took some that cannot match anybody, like
-/// 010.0.0.1 where visitors show as 10.0.0.1. they were no error then, and are skipped now
+/// entries are text: 010.0.0.1 cannot match a visitor shown as 10.0.0.1, so it is skipped like any miss
 pub(crate) fn was_valid_allowlist_entry(entry: &str) -> bool {
     let e = entry.to_ascii_lowercase();
     let octets: Vec<_> = e.split('.').collect();
@@ -86,7 +82,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn takes_what_endlessh_took() {
+    fn takes_the_flags() {
         let a = EndlesshArgs::parse("-4 -v -vv -d 500 -l64 -m 9 -p 2200 -s").unwrap();
         assert_eq!(a.family, Some(Family::V4));
         assert_eq!(a.delay_ms, Some(500));
@@ -108,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_what_endlessh_refused() {
+    fn refuses_bad_flags() {
         for bad in ["-x", "foo", "-", "-d", "-p x", "-l 3 7", "-h", "-V"] {
             assert!(EndlesshArgs::parse(bad).is_err(), "{bad}");
         }
