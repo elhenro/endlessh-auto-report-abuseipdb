@@ -20,13 +20,26 @@ own_port() {
 # an enabled sshd takes this port at its next start, running or not. sshd -T is the authority, but it
 # needs root and /run/sshd, which goes away with sshd; else the config files, where no Port line means 22
 sshd_wants() {
-  command -v systemctl >/dev/null && command -v sshd >/dev/null || return 1
+  command -v systemctl >/dev/null || return 1
   local unit ports enabled=0
   for unit in ssh sshd ssh.socket sshd.socket; do
     systemctl is-enabled --quiet "$unit" 2>/dev/null && enabled=1
   done
   [ "$enabled" = 1 ] || return 1
-  ports=$(sshd -T 2>/dev/null | awk 'tolower($1) == "port" { print $2 }')
+  # socket-activated sshd: the socket unit owns the port, and sshd_config's Port is not what it listens
+  # on. an install that moved sshd to make room for the tarpit does exactly this, so read Listen first
+  for unit in sshd.socket ssh.socket; do
+    systemctl is-enabled --quiet "$unit" 2>/dev/null || continue
+    ports=$(systemctl show -p Listen --value "$unit" 2>/dev/null | grep -oE ':[0-9]+' | tr -d :)
+    if [ -n "$ports" ]; then
+      printf '%s\n' "$ports" | grep -qx "$1"
+      return
+    fi
+  done
+  ports=""
+  if command -v sshd >/dev/null; then
+    ports=$(sshd -T 2>/dev/null | awk 'tolower($1) == "port" { print $2 }')
+  fi
   [ -n "$ports" ] || ports=$(cat /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk 'tolower($1) == "port" { print $2 }')
   printf '%s\n' "${ports:-22}" | grep -qx "$1"
 }
