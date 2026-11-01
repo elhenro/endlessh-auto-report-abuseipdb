@@ -69,7 +69,11 @@ fn print_status(cfg: &Config) {
         Some(endlessh_reporter::legacy::Family::V4) => "ipv4",
         Some(endlessh_reporter::legacy::Family::V6) => "ipv6",
     };
-    let list = |v: &Option<String>| if v.is_some() { "set" } else { "not set" };
+    // "not set" on its own reads like a bug when the unit hands the secret over as a credential
+    let list = |v: &Option<String>, names: &str| {
+        v.as_ref()
+            .map_or_else(|| format!("not set ({names})"), |_| "set".to_string())
+    };
     let path = |p: &Option<std::path::PathBuf>| {
         p.as_ref()
             .map_or_else(|| "none".to_string(), |p| p.display().to_string())
@@ -111,8 +115,20 @@ fn print_status(cfg: &Config) {
         "allowlist: {n} {}",
         if n == 1 { "entry" } else { "entries" }
     );
-    log!("api token: {}", list(&cfg.api_token));
-    log!("webhook url: {}", list(&cfg.webhook_url));
+    log!(
+        "api token: {}",
+        list(
+            &cfg.api_token,
+            "API_TOKEN, API_TOKEN_FILE, or the unit credential"
+        )
+    );
+    log!(
+        "webhook url: {}",
+        list(
+            &cfg.webhook_url,
+            "WEBHOOK_URL, WEBHOOK_URL_FILE, or the unit credential"
+        )
+    );
     log!("reported file: {}", path(&cfg.reported_file));
     log!("events dir: {}", path(&cfg.events_dir));
     if cfg!(target_os = "linux") {
