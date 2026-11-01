@@ -66,6 +66,35 @@ tarpit: connect 192.168.65.1 -> skipped (private/reserved address)
 tarpit: 412 connections skipped, last 192.168.65.1 (private/reserved address)
 ```
 
+## Command line
+
+Settings come from the environment, not from flags. The binary only answers questions:
+
+```bash
+endlessh-reporter --version   # endlessh-reporter 2.0.2
+endlessh-reporter help        # usage and exit codes
+endlessh-reporter status      # what this shell resolves, without binding a port or calling the api
+endlessh-reporter --healthcheck  # exit 0 if the configured port is listening, 1 if not
+```
+
+`status` prints the settings the service would start with, so a wrong `.env` or unit environment shows up before a restart:
+
+```
+tarpit: port: 22 (ipv4+ipv6)
+tarpit: dedupe: 3600 s, http timeout: 10 s, report all: false
+tarpit: sinks: abuseipdb
+tarpit: allowlist: 0 entries
+tarpit: api token: set
+tarpit: listening on 22: yes
+```
+
+On docker, pass the settings and the command:
+
+```bash
+# the image has no entrypoint, so name the binary; compose passes the service env along
+docker compose run --rm endlessh /usr/local/bin/endlessh-reporter status
+```
+
 ## Configuration
 
 `.env` for docker, `/etc/endlessh-reporter/env` for systemd.
