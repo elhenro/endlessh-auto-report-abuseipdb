@@ -14,31 +14,35 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// bytes the kernel holds unread on the tarpit's side of the connection from `client`
+/// bytes the kernel holds unread on the tarpit's side of `port` <- `client`; both ports and no
+/// TIME_WAIT, since the table is per network namespace and an older connection may reuse `client`
 #[cfg(target_os = "linux")]
-fn unread(pid: u32, client: u16) -> Option<usize> {
-    let remote = format!(":{client:04X}");
+fn unread(pid: u32, port: u16, client: u16) -> Option<usize> {
+    let (local, remote) = (format!(":{port:04X}"), format!(":{client:04X}"));
     ["tcp", "tcp6"].iter().find_map(|table| {
         let table = std::fs::read_to_string(format!("/proc/{pid}/net/{table}")).ok()?;
         // sl local_address rem_address st tx_queue:rx_queue ...
         table.lines().find_map(|line| {
             let f: Vec<_> = line.split_whitespace().collect();
-            let queue = f[4].split_once(':')?.1;
-            f[2].ends_with(&remote)
-                .then(|| usize::from_str_radix(queue, 16).unwrap())
+            if !(f[1].ends_with(&local) && f[2].ends_with(&remote)) || f[3] == "06" {
+                return None;
+            }
+            Some(usize::from_str_radix(f[4].split_once(':')?.1, 16).unwrap())
         })
     })
 }
 
 #[cfg(target_os = "macos")]
-fn unread(pid: u32, client: u16) -> Option<usize> {
+fn unread(pid: u32, port: u16, client: u16) -> Option<usize> {
     let out = std::process::Command::new("/usr/sbin/lsof")
         .args(["-nP", "-a", "-iTCP", "-T", "q", "-p", &pid.to_string()])
         .output()
         .unwrap();
     // ... TCP 127.0.0.1:2222->127.0.0.1:50000 (QR=38 QS=0)
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let line = text.lines().find(|l| l.contains(&format!(":{client} ")))?;
+    let line = text
+        .lines()
+        .find(|l| l.contains(&format!(":{port}->")) && l.contains(&format!(":{client} ")))?;
     let queue = line.split("QR=").nth(1)?.split(' ').next()?;
     queue.parse().ok()
 }
@@ -56,12 +60,16 @@ fn never_reads_what_a_client_sends() {
 
     // anything reading the socket, even to discard, would empty this queue
     let deadline = Instant::now() + Duration::from_secs(5);
-    while unread(pid, client) != Some(hello.len()) {
-        assert!(Instant::now() < deadline, "{:?}", unread(pid, client));
+    while unread(pid, port, client) != Some(hello.len()) {
+        assert!(Instant::now() < deadline, "{:?}", unread(pid, port, client));
         thread::sleep(Duration::from_millis(10));
     }
     thread::sleep(Duration::from_millis(300)); // about 10 banner ticks
-    assert_eq!(unread(pid, client), Some(hello.len()), "input consumed");
+    assert_eq!(
+        unread(pid, port, client),
+        Some(hello.len()),
+        "input consumed"
+    );
 
     // no answer, no crash: only more banner lines
     let mut got = vec![0u8; 4096];
