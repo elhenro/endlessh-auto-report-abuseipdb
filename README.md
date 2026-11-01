@@ -36,7 +36,7 @@ Old settings, flags, exit codes and `tarpitReporter.sh` all still work. The new 
 | image internals | shell and tools | none; read the file with `docker run --rm -v <project>_reported:/data debian:stable-slim cat /data/reportedIps.txt` | pin `:1.0.0` |
 | `ENDLESSH_ARGS=-f <file>` | endlessh read it | warning, not read: use `TARPIT_*` | none |
 
-The report body is byte for byte v1's, so old and new rows on abuseipdb read the same; the only filters that changed are the two above.
+The report keeps v1's categories (`18,22`) and opens with v1's wording (`SSH login attempts:`), without the endlessh log line quoted after it; the only filters that changed are the ones above.
 
 Once, in `.env`, to turn on the two new options: `COMPOSE_FILE=docker-compose.yml:docker-compose.secrets.yml:docker-compose.ipv6.yml`, then `docker compose up -d` (key in a file; IPv6 clients visible to docker's proxy).
 
@@ -94,7 +94,7 @@ tarpit: 412 connections skipped, last 192.168.65.1 (private/reserved address)
 
 ## What gets reported
 
-A connection is reported (once per 15 minutes per IP, per /64 for IPv6) if its first bytes are `SSH-`, about 10 seconds after it connects. The report is the one the bash version has always sent: categories `18,22` and the comment `SSH login attempts (endlessh): ACCEPT host=<ip> port=<port>`. The tarpit never reads past those first bytes, so the comment is what endlessh's own log said, not a claim about a password being tried.
+A connection is reported (once per 15 minutes per IP, per /64 for IPv6) if its first bytes are `SSH-`, about 10 seconds after it connects. The payload keeps the bash version's categories, `18,22` (brute force, SSH), and its wording: the comment is `SSH login attempts: client from port <port> held in the tarpit`. It says tarpit, not endlessh, because 2.x contains no endlessh, and it does not quote endlessh's old `ACCEPT host=...` log line. What it records is what this program saw: an SSH-protocol client held on purpose.
 
 **Not reported, because it could be anybody:** a connection that opens with anything else (HTTP, TLS), says nothing within 10 seconds, or closes silently (`nc -z`, port checkers). Otherwise a web page or link preview bot could be pointed at any host and whoever runs it would get reported. The tarpit still holds them, it just stays quiet. It peeks at the first 4 bytes and compares them with `SSH-`; they stay unread in the kernel. OpenSSH, libssh, libssh2 and paramiko speak first; nmap's `ssh-hostkey` does not and is skipped.
 
