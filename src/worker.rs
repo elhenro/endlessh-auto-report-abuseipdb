@@ -115,7 +115,7 @@ impl Worker {
         }
     }
 
-    /// also report clients that never said `SSH-`, as the old reporter did. see REPORT_ALL_CONNECTIONS in the readme
+    /// report clients that never said `SSH-` too (REPORT_ALL_CONNECTIONS)
     pub fn report_all(mut self, on: bool) -> Self {
         self.report_all = on;
         self

@@ -47,11 +47,11 @@ fn reports_once_filters_and_logs_events() {
     assert!(r.starts_with("post /report "), "{r}");
     assert!(r.contains("\r\nkey: tok\r\n"), "{r}");
     assert!(
-        r.contains("ip=8.8.8.8") && r.contains("categories=14%2c22"),
+        r.contains("ip=8.8.8.8") && r.contains("categories=18%2c22"),
         "{r}"
     );
     assert!(
-        r.contains("no+login+attempted") || r.contains("no%20login%20attempted"),
+        r.contains("comment=ssh+login+attempts%3a+client+from+port+40000+held+in+the+tarpit"),
         "{r}"
     );
 }

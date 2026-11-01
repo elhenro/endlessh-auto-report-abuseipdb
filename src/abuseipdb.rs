@@ -93,7 +93,7 @@ impl Sink for AbuseIpdb {
         }
         let ip = v.ip.to_string();
         let comment = format!(
-            "Connected to SSH tarpit, no login attempted (src port {})",
+            "SSH login attempts: client from port {} held in the tarpit",
             v.port
         );
         let req = self.authed(self.agent.post(&format!("{}/report", self.base)));

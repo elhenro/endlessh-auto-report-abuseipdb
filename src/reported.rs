@@ -1,5 +1,4 @@
-//! audit file of successful reports, one "2026-01-01T00:00:00Z 1.2.3.4" per line, in the old reporter's format.
-//! it grows until you trim it, so it is opened per write: moving or emptying it between reports just works
+//! one "2026-01-01T00:00:00Z 1.2.3.4" per line, opened per write so moving or emptying it just works
 
 use crate::{dates::timestamp, events::open_append};
 use std::{io::Write, net::IpAddr, path::PathBuf};

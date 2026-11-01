@@ -29,13 +29,14 @@ Old settings, flags, exit codes and `tarpitReporter.sh` all still work. The new 
 | what | old | now | to get the old behaviour |
 |---|---|---|---|
 | who gets reported | every TCP connection | only clients that open with `SSH-` ([why](#what-gets-reported)) | `REPORT_ALL_CONNECTIONS=1` |
-| categories, comment | `18,22`, "SSH login attempts" | `14,22`, "Connected to SSH tarpit, no login attempted" | `CATEGORIES=18,22` |
 | clients per source | no limit | `TARPIT_MAX_PER_IP`, 8x per /24, half the slots for private addresses | raise `TARPIT_MAX_PER_IP` |
 | IPv6 repeats | per address | per /64 | none |
 | systemd: changing `TARPIT_PORT` | `systemctl restart` | re-run the installer (a socket unit holds the port) | none |
 | fresh install off port 22 | reports | `DRY_RUN=1` | `DRY_RUN=0 ./install.sh` |
 | image internals | shell and tools | none; read the file with `docker run --rm -v <project>_reported:/data debian:stable-slim cat /data/reportedIps.txt` | pin `:1.0.0` |
 | `ENDLESSH_ARGS=-f <file>` | endlessh read it | warning, not read: use `TARPIT_*` | none |
+
+The report keeps v1's categories (`18,22`) and opens with v1's wording (`SSH login attempts:`), without the endlessh log line quoted after it; the only filters that changed are the ones above.
 
 Once, in `.env`, to turn on the two new options: `COMPOSE_FILE=docker-compose.yml:docker-compose.secrets.yml:docker-compose.ipv6.yml`, then `docker compose up -d` (key in a file; IPv6 clients visible to docker's proxy).
 
@@ -84,7 +85,7 @@ tarpit: 412 connections skipped, last 192.168.65.1 (private/reserved address)
 | `TARPIT_MAX_PER_IP` | `32` | clients per IP (IPv6: /64), 8x per /24 (IPv6: /48); private addresses share at most half of `TARPIT_MAX_CLIENTS` |
 | `TARPIT_MAX_LINE` | `32` | max bytes per banner line (3-255) |
 | `DEDUPE_SECONDS` | `900` | no repeat report within this window (AbuseIPDB refuses repeats under 15 minutes anyway) |
-| `CATEGORIES` | `14,22` | AbuseIPDB categories: `14` port scan, `22` SSH |
+| `CATEGORIES` | `18,22` | AbuseIPDB categories: `18` brute force, `22` SSH; same as v1 |
 | `HTTP_TIMEOUT` | `10` | seconds per API call (1-120); old name `CURL_TIMEOUT` works |
 | `REPORTED_FILE` | `/data/reportedIps.txt`, systemd `/var/lib/endlessh-reporter/reportedIps.txt` | what AbuseIPDB accepted, `<time> <ip>` per line; empty turns it off; a symlink is refused |
 | `EVENTS_DIR` | systemd `/var/lib/endlessh-reporter/events` | write the [event log](#event-log) here; empty turns it off |
@@ -93,7 +94,7 @@ tarpit: 412 connections skipped, last 192.168.65.1 (private/reserved address)
 
 ## What gets reported
 
-A connection is reported (once per 15 minutes per IP, per /64 for IPv6) if its first bytes are `SSH-`, about 10 seconds after it connects. The tarpit never sees credentials, so the report says "Connected to SSH tarpit, no login attempted" with categories port scan and SSH, not brute force.
+A connection is reported (once per 15 minutes per IP, per /64 for IPv6) if its first bytes are `SSH-`, about 10 seconds after it connects. The payload keeps the bash version's categories, `18,22` (brute force, SSH), and its wording: the comment is `SSH login attempts: client from port <port> held in the tarpit`. It says tarpit, not endlessh, because 2.x contains no endlessh, and it does not quote endlessh's old `ACCEPT host=...` log line. What it records is what this program saw: an SSH-protocol client held on purpose.
 
 **Not reported, because it could be anybody:** a connection that opens with anything else (HTTP, TLS), says nothing within 10 seconds, or closes silently (`nc -z`, port checkers). Otherwise a web page or link preview bot could be pointed at any host and whoever runs it would get reported. The tarpit still holds them, it just stays quiet. It peeks at the first 4 bytes and compares them with `SSH-`; they stay unread in the kernel. OpenSSH, libssh, libssh2 and paramiko speak first; nmap's `ssh-hostkey` does not and is skipped.
 

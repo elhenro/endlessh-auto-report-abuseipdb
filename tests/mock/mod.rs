@@ -1,8 +1,8 @@
 //! local mock api plus a driver that runs the worker over a list of events
 
 use endlessh_reporter::{
-    abuseipdb::AbuseIpdb, events::EventLog, ip::AllowList, sinks::Sink, tarpit::Event,
-    worker::Worker,
+    abuseipdb::AbuseIpdb, config::DEFAULT_CATEGORIES, events::EventLog, ip::AllowList, sinks::Sink,
+    tarpit::Event, worker::Worker,
 };
 use std::{
     fs,
@@ -116,7 +116,7 @@ pub fn abuse(base: &str) -> Box<dyn Sink> {
     Box::new(AbuseIpdb::new(
         base,
         "tok".into(),
-        "14,22".into(),
+        DEFAULT_CATEGORIES.into(),
         Duration::from_secs(5),
     ))
 }

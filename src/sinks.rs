@@ -49,7 +49,7 @@ impl Outcome {
         }
     }
 
-    /// what the log says after "connect <ip> -> ". the old reporter's wording: log filters may match on it
+    /// the text after "connect <ip> -> ", stable because log filters match on it
     pub fn describe(self) -> String {
         match self {
             Outcome::Reported(q) => format!(

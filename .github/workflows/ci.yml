@@ -34,7 +34,7 @@ jobs:
           cp .env.example .env
           docker compose config -q
           docker compose -f docker-compose.yml -f docker-compose.secrets.yml -f docker-compose.ipv6.yml config -q
-          # an .env from the old version: nothing but what it wrote
+          # an .env as 1.0.0 wrote it, nothing more
           printf 'API_TOKEN=x\nHOST_PORT=22\nDRY_RUN=0\nALLOWLIST=\n' > .env
           docker compose config -q
 
