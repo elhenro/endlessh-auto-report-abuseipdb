@@ -1,5 +1,5 @@
 # both bases are pinned by digest; dependabot proposes updates
-FROM rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS build
+FROM rust:1.99-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS build
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 # /data and the old entry point: the final image has no shell to create them with.
 # cargo-auditable records the crate list in the binary: to an image scanner a stripped rust binary is blank otherwise
